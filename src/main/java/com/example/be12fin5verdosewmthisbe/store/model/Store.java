@@ -8,6 +8,8 @@ import com.example.be12fin5verdosewmthisbe.order.model.Order;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Menu;
 import com.example.be12fin5verdosewmthisbe.menu_management.option.model.Option;
 import com.example.be12fin5verdosewmthisbe.user.model.User;
+import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -43,16 +45,19 @@ public class Store {
     private Double longitude;
 
     @OneToOne
+    @JsonBackReference
     @JoinColumn(name="user_id")
     private User user;
 
     @OneToMany(mappedBy = "store")
+    @JsonIgnore
     private List<Order> orderList = new ArrayList<>();
 
     @OneToMany(mappedBy = "store", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Category> categoryList = new ArrayList<>();
 
     @OneToMany(mappedBy = "store", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
     private List<Menu> menuList = new ArrayList<>();
 
     @OneToMany(mappedBy = "store", cascade = CascadeType.ALL, orphanRemoval = true)
