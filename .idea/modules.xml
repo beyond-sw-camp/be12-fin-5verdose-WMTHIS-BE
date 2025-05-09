@@ -2,7 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/be12-fin-5verdose-WMTHIS-BE.main.iml" filepath="$PROJECT_DIR$/.idea/modules/be12-fin-5verdose-WMTHIS-BE.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/module-api/demo.module-api.main.iml" filepath="$PROJECT_DIR$/.idea/modules/module-api/demo.module-api.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/module-batch/demo.module-batch.main.iml" filepath="$PROJECT_DIR$/.idea/modules/module-batch/demo.module-batch.main.iml" />
     </modules>
   </component>
 </project>

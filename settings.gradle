@@ -1,1 +1,3 @@
-rootProject.name = 'be12-fin-5verdose-WMTHIS-BE'
+rootProject.name = 'demo'
+include 'module-api'
+include 'module-batch'
