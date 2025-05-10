@@ -26,6 +26,8 @@ import com.example.be12fin5verdosewmthisbe.order.model.OrderOption;
 import com.example.be12fin5verdosewmthisbe.order.model.dto.*;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderMenuRepository;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderRepository;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisMenuDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisRecipeDto;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.store.repository.StoreRepository;
 import jakarta.annotation.PostConstruct;
@@ -40,10 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.YearMonth;
+import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -73,6 +72,7 @@ public class OrderService {
     public void init() {
         valueOps = redisTemplate.opsForValue();
     }
+
     @Transactional
     public OrderDto.OrderCreateResponse createOrder(OrderDto.OrderCreateRequest request, Long storeId) {
         Store store = storeRepository.findById(storeId)
@@ -93,8 +93,20 @@ public class OrderService {
         Map<Inventory, BigDecimal> modifyInventoryMap = new HashMap<>();
 
         for (OrderDto.OrderMenuRequest menuReq : request.getOrderMenus()) {
-            Menu menu = menuRepository.findById(menuReq.getMenuId())
-                    .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+            // ✅ 메뉴 캐싱 (RedisMenuDto 사용)
+            String menuKey = "menu:" + menuReq.getMenuId();
+            RedisMenuDto redisMenuDto = (RedisMenuDto) redisTemplate.opsForValue().get(menuKey);
+            Menu menu;
+
+            if (redisMenuDto == null) {
+                menu = menuRepository.findById(menuReq.getMenuId())
+                        .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+                redisMenuDto = RedisMenuDto.fromMenu(menu);
+                redisTemplate.opsForValue().set(menuKey, redisMenuDto, Duration.ofHours(6));
+            } else {
+                menu = menuRepository.findById(redisMenuDto.getMenuId())
+                        .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+            }
 
             OrderMenu orderMenu = OrderMenu.builder()
                     .order(order)
@@ -106,8 +118,21 @@ public class OrderService {
 
             int menuTotal = menuReq.getPrice() * menuReq.getQuantity();
 
-            // 레시피 차감
-            List<Recipe> recipes = recipeRepository.findAllByMenu(menu);
+            // ✅ 레시피 캐싱 (RedisRecipeDto 사용)
+            String recipeKey = "recipe:menu:" + menu.getId();
+            List<RedisRecipeDto> redisRecipeDtos = (List<RedisRecipeDto>) redisTemplate.opsForValue().get(recipeKey);
+            List<Recipe> recipes;
+
+            if (redisRecipeDtos == null) {
+                recipes = recipeRepository.findAllByMenu(menu);
+                redisRecipeDtos = recipes.stream()
+                        .map(Recipe::toRedisRecipeDto)
+                        .collect(Collectors.toList());
+                redisTemplate.opsForValue().set(recipeKey, redisRecipeDtos, Duration.ofHours(6));
+            } else {
+                recipes = recipeRepository.findAllByMenu(menu); // 실제 사용을 위해 DB에서 가져옴
+            }
+
             for (Recipe recipe : recipes) {
                 List<StoreInventory> ingredients = storeInventoryRepository.findByStore_IdAndRecipeList(storeId, recipe);
                 for (StoreInventory storeInventory : ingredients) {
@@ -117,10 +142,15 @@ public class OrderService {
                 }
             }
 
-            // 옵션 차감
+            // ✅ 옵션 및 옵션값 캐싱
             for (Long optionId : menuReq.getOptionIds()) {
-                Option option = optionRepository.findById(optionId)
-                        .orElseThrow(() -> new RuntimeException("Option not found"));
+                String optionKey = "option:" + optionId;
+                Option option = (Option) redisTemplate.opsForValue().get(optionKey);
+                if (option == null) {
+                    option = optionRepository.findById(optionId)
+                            .orElseThrow(() -> new RuntimeException("Option not found"));
+                    redisTemplate.opsForValue().set(optionKey, option, Duration.ofHours(6));
+                }
 
                 OrderOption orderOption = OrderOption.builder()
                         .orderMenu(orderMenu)
@@ -130,7 +160,13 @@ public class OrderService {
                 orderMenu.getOrderOptionList().add(orderOption);
                 menuTotal += option.getPrice() * menuReq.getQuantity();
 
-                List<OptionValue> optionValues = optionValueRepository.findAllByOption(option);
+                String valueKey = "optionValue:option:" + optionId;
+                List<OptionValue> optionValues = (List<OptionValue>) redisTemplate.opsForValue().get(valueKey);
+                if (optionValues == null) {
+                    optionValues = optionValueRepository.findAllByOption(option);
+                    redisTemplate.opsForValue().set(valueKey, optionValues, Duration.ofHours(6));
+                }
+
                 for (OptionValue optionValue : optionValues) {
                     StoreInventory optionInventory = optionValue.getStoreInventory();
                     BigDecimal quantityToDeduct = optionValue.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
@@ -152,31 +188,25 @@ public class OrderService {
             Long storeInventoryId = entry.getKey();
             BigDecimal used = entry.getValue();
             String redisKey = "usedInventory:" + storeInventoryId + ":" + today;
-
             valueOps.increment(redisKey, used.doubleValue());
         }
 
-        // ✅ Redis 캐싱: MenuCount
         for (Map.Entry<Menu, Integer> entry : menuCountMap.entrySet()) {
             Menu menu = entry.getKey();
             Integer count = entry.getValue();
             String redisKey = "menuCount:" + menu.getId() + ":" + storeId + ":" + today;
-
             valueOps.increment(redisKey, count.doubleValue());
         }
 
-        // ModifyInventory는 DB 저장 유지
         Timestamp now = Timestamp.valueOf(LocalDateTime.now());
         for (Map.Entry<Inventory, BigDecimal> entry : modifyInventoryMap.entrySet()) {
             Inventory inventory = entry.getKey();
-            BigDecimal deficit = entry.getValue(); // 음수
-
+            BigDecimal deficit = entry.getValue();
             ModifyInventory modify = ModifyInventory.builder()
                     .inventory(inventory)
                     .modifyQuantity(deficit)
                     .modifyDate(now)
                     .build();
-
             modifyInventoryRepository.save(modify);
         }
 
@@ -187,6 +217,7 @@ public class OrderService {
         String redisKey = "inventory:" + storeInventory.getId();
         ValueOperations<String, Object> ops = redisTemplate.opsForValue();
 
+        // Redis에서 재고 수량을 가져옴
         BigDecimal redisQuantity = Optional.ofNullable((BigDecimal) ops.get(redisKey)).orElse(storeInventory.getQuantity());
 
         BigDecimal remaining = requestedQuantity;
@@ -195,16 +226,16 @@ public class OrderService {
         if (redisQuantity.compareTo(remaining) < 0) {
             totalDeducted = redisQuantity;
             remaining = remaining.subtract(redisQuantity);
-            ops.set(redisKey, BigDecimal.ZERO);
+            ops.set(redisKey, BigDecimal.ZERO); // Redis에서 재고를 0으로 업데이트
         } else {
             totalDeducted = remaining;
-            ops.set(redisKey, redisQuantity.subtract(remaining));
+            ops.set(redisKey, redisQuantity.subtract(remaining)); // Redis에서 재고 차감
             remaining = BigDecimal.ZERO;
         }
 
         if (remaining.compareTo(BigDecimal.ZERO) > 0) {
             List<Inventory> inventories = inventoryRepository.findAllByStoreInventory(storeInventory);
-            inventories.sort(Comparator.comparing(Inventory::getExpiryDate));
+            inventories.sort(Comparator.comparing(Inventory::getExpiryDate)); // 만료일 순으로 정렬
             Inventory lastInventory = null;
 
             for (Inventory inv : inventories) {
@@ -218,17 +249,19 @@ public class OrderService {
                     lastInventory = inv;
                     remaining = BigDecimal.ZERO;
                 }
-                inventoryRepository.save(inv);
+                inventoryRepository.save(inv); // DB에 재고 업데이트
                 if (remaining.compareTo(BigDecimal.ZERO) <= 0) break;
             }
 
             if (remaining.compareTo(BigDecimal.ZERO) > 0 && lastInventory != null) {
+                // 재고 부족분을 ModifyInventory에 기록
                 modifyInventoryMap.merge(lastInventory, remaining.negate(), BigDecimal::add);
             }
         }
 
         return requestedQuantity;
     }
+
 
 
     public List<OrderDto.AllOrderList> getOrdersByStoreId(Long storeId) {
@@ -482,4 +515,3 @@ public class OrderService {
 
 
 }
-        
