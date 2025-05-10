@@ -1,6 +1,7 @@
 package com.example.be12fin5verdosewmthisbe.user.model;
 
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.security.core.GrantedAuthority;
@@ -41,6 +42,7 @@ public class User implements UserDetails{
     private String ssn; // 주민번호
 
     @OneToOne(mappedBy = "user")
+    @JsonManagedReference
     @JoinColumn(name="user_id")
     private Store store; //상점과 연결
 
