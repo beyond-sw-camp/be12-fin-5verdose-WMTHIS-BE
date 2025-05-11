@@ -1,10 +1,7 @@
 package com.example.be12fin5verdosewmthisbe.redis.dto;
 
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
 import java.math.BigDecimal;
 
@@ -12,6 +9,7 @@ import java.math.BigDecimal;
 @Setter
 @Builder
 @AllArgsConstructor
+@NoArgsConstructor
 public class RedisRecipeDto {
     private Long recipeId;
     private String storeInventoryName;
