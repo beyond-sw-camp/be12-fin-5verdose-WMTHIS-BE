@@ -27,6 +27,8 @@ import com.example.be12fin5verdosewmthisbe.order.model.dto.*;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderMenuRepository;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderRepository;
 import com.example.be12fin5verdosewmthisbe.redis.dto.RedisMenuDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisOptionDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisOptionValueDto;
 import com.example.be12fin5verdosewmthisbe.redis.dto.RedisRecipeDto;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.store.repository.StoreRepository;
@@ -145,35 +147,34 @@ public class OrderService {
             // ✅ 옵션 및 옵션값 캐싱
             for (Long optionId : menuReq.getOptionIds()) {
                 String optionKey = "option:" + optionId;
-                Option option = (Option) redisTemplate.opsForValue().get(optionKey);
-                if (option == null) {
-                    option = optionRepository.findById(optionId)
+                RedisOptionDto redisOptionDto = (RedisOptionDto) redisTemplate.opsForValue().get(optionKey);
+
+                if (redisOptionDto == null) {
+                    Option option = optionRepository.findById(optionId)
                             .orElseThrow(() -> new RuntimeException("Option not found"));
-                    redisTemplate.opsForValue().set(optionKey, option, Duration.ofHours(6));
+                    redisOptionDto = RedisOptionDto.fromOption(option);
+                    redisTemplate.opsForValue().set(optionKey, redisOptionDto, Duration.ofHours(6));
                 }
 
                 OrderOption orderOption = OrderOption.builder()
                         .orderMenu(orderMenu)
-                        .option(option)
+                        .option(optionRepository.findById(redisOptionDto.getOptionId())
+                                .orElseThrow(() -> new RuntimeException("Option not found")))
                         .build();
 
                 orderMenu.getOrderOptionList().add(orderOption);
-                menuTotal += option.getPrice() * menuReq.getQuantity();
+                menuTotal += redisOptionDto.getPrice() * menuReq.getQuantity();
 
-                String valueKey = "optionValue:option:" + optionId;
-                List<OptionValue> optionValues = (List<OptionValue>) redisTemplate.opsForValue().get(valueKey);
-                if (optionValues == null) {
-                    optionValues = optionValueRepository.findAllByOption(option);
-                    redisTemplate.opsForValue().set(valueKey, optionValues, Duration.ofHours(6));
-                }
+                for (RedisOptionValueDto valueDto : redisOptionDto.getValues()) {
+                    StoreInventory optionInventory = storeInventoryRepository.findById(valueDto.getStoreInventoryId())
+                            .orElseThrow(() -> new RuntimeException("Inventory not found"));
 
-                for (OptionValue optionValue : optionValues) {
-                    StoreInventory optionInventory = optionValue.getStoreInventory();
-                    BigDecimal quantityToDeduct = optionValue.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
+                    BigDecimal quantityToDeduct = valueDto.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
                     BigDecimal used = deductInventory(optionInventory, quantityToDeduct, modifyInventoryMap);
                     usedInventoryMap.merge(optionInventory.getId(), used, BigDecimal::add);
                 }
             }
+
 
             order.getOrderMenuList().add(orderMenu);
             totalPrice += menuTotal;
