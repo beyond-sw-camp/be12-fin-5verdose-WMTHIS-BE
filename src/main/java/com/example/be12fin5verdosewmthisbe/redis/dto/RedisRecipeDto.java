@@ -15,7 +15,6 @@ import java.math.BigDecimal;
 public class RedisRecipeDto {
     private Long recipeId;
     private Long storeInventoryId;  // storeInventoryId로 변경
-    private BigDecimal price;
     private BigDecimal quantity;
 
     // Recipe 객체를 RedisRecipeDto로 변환하는 메서드
@@ -23,7 +22,6 @@ public class RedisRecipeDto {
         return new RedisRecipeDto(
                 recipe.getId(),
                 recipe.getStoreInventory().getId(),
-                recipe.getPrice(),
                 recipe.getQuantity()
         );
     }
@@ -33,6 +31,6 @@ public class RedisRecipeDto {
         StoreInventory storeInventory = storeInventoryRepository.findById(this.storeInventoryId)
                 .orElseThrow(() -> new RuntimeException("StoreInventory not found"));
 
-        return new Recipe(this.recipeId, storeInventory, this.price, this.quantity);
+        return new Recipe(this.recipeId, storeInventory, this.quantity);
     }
 }
