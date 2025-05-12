@@ -95,19 +95,19 @@ public class OrderService {
         Map<Inventory, BigDecimal> modifyInventoryMap = new HashMap<>();
 
         for (OrderDto.OrderMenuRequest menuReq : request.getOrderMenus()) {
-            // ✅ 메뉴 캐싱 (RedisMenuDto 사용)
-            String menuKey = "menu:" + menuReq.getMenuId();
+            Long menuId = menuReq.getMenuId();
+            String menuKey = "menu:" + menuId;
             RedisMenuDto redisMenuDto = (RedisMenuDto) redisTemplate.opsForValue().get(menuKey);
-            Menu menu;
+
+            Menu menu = null;
 
             if (redisMenuDto == null) {
-                menu = menuRepository.findById(menuReq.getMenuId())
+                menu = menuRepository.findById(menuId)
                         .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
                 redisMenuDto = RedisMenuDto.fromMenu(menu);
                 redisTemplate.opsForValue().set(menuKey, redisMenuDto, Duration.ofHours(6));
             } else {
-                menu = menuRepository.findById(redisMenuDto.getMenuId())
-                        .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+                menu = redisMenuDto.toMenu(storeInventoryRepository);
             }
 
             OrderMenu orderMenu = OrderMenu.builder()
@@ -132,7 +132,9 @@ public class OrderService {
                         .collect(Collectors.toList());
                 redisTemplate.opsForValue().set(recipeKey, redisRecipeDtos, Duration.ofHours(6));
             } else {
-                recipes = recipeRepository.findAllByMenu(menu); // 실제 사용을 위해 DB에서 가져옴
+                recipes = redisRecipeDtos.stream()
+                        .map(redisRecipeDto -> redisRecipeDto.toRecipe(storeInventoryRepository))
+                        .collect(Collectors.toList());
             }
 
             for (Recipe recipe : recipes) {
@@ -174,7 +176,6 @@ public class OrderService {
                     usedInventoryMap.merge(optionInventory.getId(), used, BigDecimal::add);
                 }
             }
-
 
             order.getOrderMenuList().add(orderMenu);
             totalPrice += menuTotal;

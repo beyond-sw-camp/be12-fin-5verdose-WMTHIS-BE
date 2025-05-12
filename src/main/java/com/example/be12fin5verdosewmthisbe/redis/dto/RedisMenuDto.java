@@ -1,5 +1,6 @@
 package com.example.be12fin5verdosewmthisbe.redis.dto;
 
+import com.example.be12fin5verdosewmthisbe.inventory.repository.StoreInventoryRepository;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Menu;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
 import lombok.*;
@@ -29,5 +30,18 @@ public class RedisMenuDto {
                         .map(Recipe::toRedisRecipeDto)
                         .collect(Collectors.toList()))
                 .build();
+    }
+
+    public Menu toMenu(StoreInventoryRepository storeInventoryRepository) {
+        Menu menu = new Menu();
+        menu.setId(this.menuId);
+        menu.setName(this.name);
+        menu.setPrice(this.price);
+        menu.setCategory(this.category.toCategory());
+        menu.setRecipeList(this.recipes.stream()
+                .map(redisRecipeDto -> redisRecipeDto.toRecipe(storeInventoryRepository))
+                .collect(Collectors.toList()));
+
+        return menu;
     }
 }

@@ -20,4 +20,11 @@ public class RedisCategoryDto {
                 category.getStore().getId()  // store의 ID만 포함시킴 (순환 참조 방지)
         );
     }
+
+    public Category toCategory() {
+        Category category = new Category();
+        category.setId(this.id);
+        category.setName(this.name);
+        return category;
+    }
 }
