@@ -1,5 +1,6 @@
 package com.example.be12fin5verdosewmthisbe.inventory.model;
 
+import com.example.be12fin5verdosewmthisbe.market_management.market.model.InventoryPurchase;
 import com.example.be12fin5verdosewmthisbe.market_management.market.model.InventorySale;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
@@ -29,7 +30,7 @@ public class StoreInventory {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "Store_inventory_id")
+    @Column(name = "id")
     @Schema(description = "매장별재고 ID", example = "1")
     private Long id;
 
@@ -78,8 +79,16 @@ public class StoreInventory {
     private List<InventorySale> inventorySaleList = new ArrayList<>();
 
     @OneToMany(mappedBy = "storeInventory", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<InventoryPurchase> inventoryPurchaseList = new ArrayList<>();
+
+    @OneToMany(mappedBy = "storeInventory", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
     private List<UsedInventory> usedInventorylist = new ArrayList<>();
+
+    @OneToMany(mappedBy = "storeInventory", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @JsonIgnore
+    @Schema(description = "수정된 재고 목록")
+    private List<ModifyInventory> modifyInventoryList;
 
 }
 

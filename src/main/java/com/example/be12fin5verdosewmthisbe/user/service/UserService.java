@@ -37,22 +37,26 @@ public class UserService implements UserDetailsService {
     @Transactional
     public UserRegisterDto.SignupResponse signUp(UserRegisterDto.SignupRequest dto) {
 
-        if(userRepository.existsByEmail(dto.getEmail())) {
-            throw new CustomException(ErrorCode.EMAIL_ALREADY_EXISTS);
-        }
-
-        if(userRepository.existsByBusinessNumber(dto.getBusinessNumber())) {
-            throw new CustomException(ErrorCode.BUSINESSNUMBER_ALREADY_EXISTS);
-        }
-
-        if(userRepository.existsByPhoneNumber(dto.getPhoneNumber())) {
-            throw new CustomException(ErrorCode.PHONENUMBER_ALREADY_EXISTS);
-        }
-
-        if(userRepository.existsBySsn(dto.getSsn())) {
-            throw new CustomException(ErrorCode.SSN_ALREADY_EXISTS);
-        }
-
+        userRepository.findByEmailOrBusinessNumberOrPhoneNumberOrSsn(
+                        dto.getEmail(),
+                        dto.getBusinessNumber(),
+                        dto.getPhoneNumber(),
+                        dto.getSsn()
+                )
+                .ifPresent(user -> {
+                    if (user.getEmail().equals(dto.getEmail())) {
+                        throw new CustomException(ErrorCode.EMAIL_ALREADY_EXISTS);
+                    }
+                    if (user.getBusinessNumber().equals(dto.getBusinessNumber())) {
+                        throw new CustomException(ErrorCode.BUSINESSNUMBER_ALREADY_EXISTS);
+                    }
+                    if (user.getPhoneNumber().equals(dto.getPhoneNumber())) {
+                        throw new CustomException(ErrorCode.PHONENUMBER_ALREADY_EXISTS);
+                    }
+                    if (user.getSsn().equals(dto.getSsn())) {
+                        throw new CustomException(ErrorCode.SSN_ALREADY_EXISTS);
+                    }
+                });
         String encodedPassword = passwordEncoder.encode(dto.getPassword());
         User user = userRepository.save(dto.toEntity(encodedPassword));
         return UserRegisterDto.SignupResponse.from(user);
@@ -60,7 +64,7 @@ public class UserService implements UserDetailsService {
 
 
     public User login(String email, String rawPassword) {
-        String encoded = passwordEncoder.encode(rawPassword);
+
         User user = userRepository.findByEmail(email).orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND) );
         if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
             throw new CustomException(ErrorCode.INVALID_PASSWORD);
@@ -106,14 +110,6 @@ public class UserService implements UserDetailsService {
         userRepository.save(user);
         return "새로운 비밀번호가 생성되었습니다.";
     }
-    public boolean isStoreRegistered(String emailUrl) {
-        User user = userRepository.findByEmail(emailUrl).orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
-        Store store = user.getStore();
-        if(store == null) {
-            return false;
-        }
-        return true;
-    } // 가게 등록되었는지 확인
 
     public String getStoreId(String emailUrl) {
         User user = userRepository.findByEmail(emailUrl).orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));

@@ -14,6 +14,9 @@ import java.util.Optional;
 
 @Repository
 public interface OptionRepository extends JpaRepository<Option, Long> {
+    @Query("SELECT o.id FROM Option o WHERE o.store.id = :storeId")
+    List<Long> findOptionIdsByStoreId(@Param("storeId") Long storeId);
+
     Page<Option> findByStoreId(Long storeId, Pageable pageable);
     Page<Option> findByStoreIdAndNameContaining(Long storeId, String keyword, Pageable pageable);
     @Query("SELECT o FROM Option o " +
@@ -23,4 +26,13 @@ public interface OptionRepository extends JpaRepository<Option, Long> {
     Optional<Option> findByIdWithOptionValues(@Param("optionId") Long optionId);
 
     Optional<Option> findByStoreIdAndName(Long storeId, String name);
+
+
+    @Query("""
+SELECT DISTINCT o FROM Option o
+LEFT JOIN FETCH o.optionValueList ov
+LEFT JOIN FETCH ov.storeInventory si
+WHERE o.id IN :ids
+    """)
+    List<Option> findAllByIdInFetchOptionValues(@Param("ids") List<Long> ids);
 }

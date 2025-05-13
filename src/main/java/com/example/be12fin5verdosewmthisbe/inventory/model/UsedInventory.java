@@ -35,6 +35,12 @@ public class UsedInventory {
     @Schema(description = "사용한 날짜", example = "2025-04-01T10:00:00Z")
     private Timestamp usedDate;
 
-    @Schema(description = "재고 이름", example = "마늘    ")
+    @Schema(description = "재고 이름", example = "마늘")
     private String name;
+
+    @Schema(description = "수정한 이유", example = "true")
+    private Boolean status;
+    // true면 메뉴로 사용
+    // false면 장터 이용으로 사용
+
 }

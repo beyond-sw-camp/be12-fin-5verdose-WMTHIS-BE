@@ -57,6 +57,7 @@ public class PaymentController {
             throw new CustomException(ErrorCode.PAYMENT_VERIFICATION_FAILED);
         }
         marketService.statusChange(request.getInventoryPurchaseId());
+
         // 주문정보테이블 수정 - status = paid
         return BaseResponse.success("ok");
     }

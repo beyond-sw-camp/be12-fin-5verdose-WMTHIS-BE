@@ -1,5 +1,6 @@
 package com.example.be12fin5verdosewmthisbe.market_management.market.model;
 
+import com.example.be12fin5verdosewmthisbe.inventory.model.StoreInventory;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
@@ -27,11 +28,16 @@ public class InventoryPurchase {
 
     private int price;
 
+    private String unit;
+
     private purchaseStatus status;
 
     private purchaseMethod method;
 
     private Timestamp createdAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    private StoreInventory storeInventory;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "inventory_sale_id")

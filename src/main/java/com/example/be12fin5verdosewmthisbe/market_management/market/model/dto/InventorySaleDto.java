@@ -70,6 +70,7 @@ public class InventorySaleDto {
         private int price;
         private String status;
         private String content;
+        private String unit;
         private LocalDate expiryDate;
         private LocalDate createdDate;
         private List<String> imageUrls;
@@ -82,6 +83,7 @@ public class InventorySaleDto {
                     .buyerStoreName(entity.getBuyerStoreName())
                     .quantity(entity.getQuantity())
                     .price(entity.getPrice())
+                    .unit(entity.getUnit())
                     .status(entity.getStatus().toString())
                     .content(entity.getContent())
                     .expiryDate(entity.getExpiryDate())

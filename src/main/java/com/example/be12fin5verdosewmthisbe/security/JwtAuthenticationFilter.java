@@ -40,7 +40,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 path.equals("/api/user/isLogin") ||
                 path.equals("/api/email/sendcodeifpwfind") ||
                 path.equals("/api/actuator/health") ||
-                path.equals("/api/store/register")
+                path.equals("/api/actuator/prometheus") ||
+                path.equals("/api/actuator/info") ||
+                path.equals("/api/store/register") ||
+                path.equals("/api/order/create") ||
+                (path.startsWith("/api/store/") && path.endsWith("/menus"))
         )
         {
 

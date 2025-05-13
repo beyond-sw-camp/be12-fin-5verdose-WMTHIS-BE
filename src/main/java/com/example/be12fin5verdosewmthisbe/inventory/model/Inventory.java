@@ -27,9 +27,9 @@ public class Inventory {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "inventoryid")
+    @Column(name = "id")
     @Schema(description = "재고 ID", example = "1")
-    private Long inventoryId;
+    private Long id;
 
     @Column(name = "purchasedate")
     @Schema(description = "구매날짜", example = "2025-04-01T10:00:00Z")
@@ -50,9 +50,4 @@ public class Inventory {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "store_inventory_id")  // 외래 키 설정
     private StoreInventory storeInventory;  // 필드 이름을 storeInventory로 설정
-
-    @OneToMany(mappedBy = "inventory", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonIgnore
-    @Schema(description = "수정된 재고 목록")
-    private List<ModifyInventory> modifyInventoryList;
 }

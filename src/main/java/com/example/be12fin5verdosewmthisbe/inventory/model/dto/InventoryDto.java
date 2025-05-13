@@ -29,6 +29,9 @@ public class InventoryDto {
     private BigDecimal quantity;
 
     @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class InventoryRegisterDto {
         // 입고할 재고
         @NotNull(message = "storeInventoryId는 필수입니다.")

@@ -10,6 +10,7 @@ import com.example.be12fin5verdosewmthisbe.inventory.repository.InventoryReposit
 import com.example.be12fin5verdosewmthisbe.inventory.repository.ModifyInventoryRepository;
 import com.example.be12fin5verdosewmthisbe.inventory.repository.StoreInventoryRepository;
 import com.example.be12fin5verdosewmthisbe.inventory.repository.UsedInventoryRepository;
+import com.example.be12fin5verdosewmthisbe.inventory.service.InventoryService;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Menu;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.MenuCount;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
@@ -26,23 +27,29 @@ import com.example.be12fin5verdosewmthisbe.order.model.OrderOption;
 import com.example.be12fin5verdosewmthisbe.order.model.dto.*;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderMenuRepository;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderRepository;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisMenuDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisOptionDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisOptionValueDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisRecipeDto;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.store.repository.StoreRepository;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
 import org.aspectj.weaver.ast.Or;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.YearMonth;
+import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static com.example.be12fin5verdosewmthisbe.order.model.dto.OrderDto.OrderCreateResponse.toOrderCreateResponse;
@@ -56,12 +63,16 @@ public class OrderService {
     private final StoreRepository storeRepository;
     private final StoreInventoryRepository storeInventoryRepository;
     private final MenuRepository menuRepository;
-    private final RecipeRepository recipeRepository;
-    private final OptionValueRepository optionValueRepository;
     private final InventoryRepository inventoryRepository;
     private final ModifyInventoryRepository modifyInventoryRepository;
     private final UsedInventoryRepository usedInventoryRepository;
     private final MenuCountRepository menuCountRepository;
+private final RedisTemplate<String, Object> redisTemplate;
+    
+    @PostConstruct
+    public void init() {
+        valueOps = redisTemplate.opsForValue();
+    }
 
     @Transactional
     public OrderDto.OrderCreateResponse createOrder(OrderDto.OrderCreateRequest request, Long storeId) {
@@ -78,26 +89,50 @@ public class OrderService {
                 .build();
 
         int totalPrice = 0;
-        Map<Long, BigDecimal> usedInventoryMap = new HashMap<>();  // Key를 Long으로 수정
+        Map<Long, BigDecimal> usedInventoryMap = new HashMap<>();
         Map<Menu, Integer> menuCountMap = new HashMap<>();
-        Map<Inventory, BigDecimal> modifyInventoryMap = new HashMap<>(); // <- 추가
+        Map<Inventory, BigDecimal> modifyInventoryMap = new HashMap<>();
 
         for (OrderDto.OrderMenuRequest menuReq : request.getOrderMenus()) {
-            Menu menu = menuRepository.findById(menuReq.getMenuId())
-                    .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+            Long menuId = menuReq.getMenuId();
+            String menuKey = "menu:" + menuId;
+            RedisMenuDto redisMenuDto = (RedisMenuDto) redisTemplate.opsForValue().get(menuKey);
+
+            Menu menu;
+            if (redisMenuDto == null) {
+                menu = menuRepository.findById(menuId)
+                        .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+                redisMenuDto = RedisMenuDto.fromMenu(menu);
+                redisTemplate.opsForValue().set(menuKey, redisMenuDto, Duration.ofHours(6));
+            } else {
+                menu = redisMenuDto.toMenu(storeInventoryRepository);
+            }
 
             OrderMenu orderMenu = OrderMenu.builder()
                     .order(order)
-                    .price(menuReq.getPrice())
+                    .price(menu.getPrice()) // 가격을 menu에서 가져옴
                     .quantity(menuReq.getQuantity())
                     .menu(menu)
                     .orderOptionList(new ArrayList<>())
                     .build();
 
-            int menuTotal = menuReq.getPrice() * menuReq.getQuantity();
+            int menuTotal = menu.getPrice() * menuReq.getQuantity(); // menu에서 가져온 가격을 사용
 
-            // 레시피 차감
-            List<Recipe> recipes = recipeRepository.findAllByMenu(menu);
+            // ✅ 레시피 캐싱
+            String recipeKey = "recipe:menu:" + menu.getId();
+            List<RedisRecipeDto> redisRecipeDtos = (List<RedisRecipeDto>) redisTemplate.opsForValue().get(recipeKey);
+            List<Recipe> recipes;
+
+            if (redisRecipeDtos == null) {
+                recipes = recipeRepository.findAllByMenu(menu);
+                redisRecipeDtos = recipes.stream().map(Recipe::toRedisRecipeDto).collect(Collectors.toList());
+                redisTemplate.opsForValue().set(recipeKey, redisRecipeDtos, Duration.ofHours(6));
+            } else {
+                recipes = redisRecipeDtos.stream()
+                        .map(dto -> dto.toRecipe(storeInventoryRepository))
+                        .collect(Collectors.toList());
+            }
+
             for (Recipe recipe : recipes) {
                 List<StoreInventory> ingredients = storeInventoryRepository.findByStore_IdAndRecipeList(storeId, recipe);
                 for (StoreInventory storeInventory : ingredients) {
@@ -107,32 +142,40 @@ public class OrderService {
                 }
             }
 
-            // 옵션 차감
+            // ✅ 옵션 및 옵션값 캐싱
             for (Long optionId : menuReq.getOptionIds()) {
-                Option option = optionRepository.findById(optionId)
-                        .orElseThrow(() -> new RuntimeException("Option not found"));
+                String optionKey = "option:" + optionId;
+                RedisOptionDto redisOptionDto = (RedisOptionDto) redisTemplate.opsForValue().get(optionKey);
+
+                if (redisOptionDto == null) {
+                    Option option = optionRepository.findById(optionId)
+                            .orElseThrow(() -> new CustomException(ErrorCode.OPTION_NOT_FOUND));
+                    redisOptionDto = RedisOptionDto.fromOption(option);
+                    redisTemplate.opsForValue().set(optionKey, redisOptionDto, Duration.ofHours(6));
+                }
+
+                Option option = optionRepository.findById(redisOptionDto.getOptionId())
+                        .orElseThrow(() -> new CustomException(ErrorCode.OPTION_NOT_FOUND));
 
                 OrderOption orderOption = OrderOption.builder()
                         .orderMenu(orderMenu)
                         .option(option)
                         .build();
-
                 orderMenu.getOrderOptionList().add(orderOption);
-                menuTotal += option.getPrice() * menuReq.getQuantity();
+                menuTotal += redisOptionDto.getPrice() * menuReq.getQuantity();
 
-                List<OptionValue> optionValues = optionValueRepository.findAllByOption(option);
-                for (OptionValue optionValue : optionValues) {
-                    StoreInventory optionInventory = optionValue.getStoreInventory();
-                    BigDecimal quantityToDeduct = optionValue.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
-                    BigDecimal used = deductInventory(optionInventory, quantityToDeduct, modifyInventoryMap); // <- 수정
-                    usedInventoryMap.merge(optionInventory.getId(), used, BigDecimal::add);  // Key를 optionInventory.getId()로 수정
+                for (RedisOptionValueDto valueDto : redisOptionDto.getOptionValues()) {
+                    StoreInventory optionInventory = storeInventoryRepository.findById(valueDto.getStoreInventoryId())
+                            .orElseThrow(() -> new CustomException(ErrorCode.INVENTORY_NOT_FOUND));
+                    BigDecimal quantityToDeduct = valueDto.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
+                    BigDecimal used = deductInventory(optionInventory, quantityToDeduct, modifyInventoryMap);
+                    usedInventoryMap.merge(optionInventory.getId(), used, BigDecimal::add);
                 }
+
+                order.getOrderMenuList().add(orderMenu);
+                totalPrice += menuTotal;
+                menuCountMap.merge(menu, menuReq.getQuantity(), Integer::sum);
             }
-
-            order.getOrderMenuList().add(orderMenu);
-            totalPrice += menuTotal;
-
-            menuCountMap.merge(menu, menuReq.getQuantity(), Integer::sum);
         }
 
         order.setTotalPrice(totalPrice);
@@ -152,6 +195,7 @@ public class OrderService {
                     .totalquantity(totalUsed)
                     .name(storeInventory.getName())
                     .usedDate(now)
+                    .status(true)
                     .build());
         }
 
@@ -179,10 +223,11 @@ public class OrderService {
             menuCountRepository.save(menuCount);
         }
 
-        return toOrderCreateResponse(savedOrder);
+        return toOrderCreateResponse(savedOrder); // 이곳에 return이 있어야 합니다.
     }
 
-    // 수정된 deductInventory
+
+
     private BigDecimal deductInventory(StoreInventory storeInventory, BigDecimal requestedQuantity, Map<Inventory, BigDecimal> modifyInventoryMap) {
         List<Inventory> inventories = inventoryRepository.findAllByStoreInventory(storeInventory);
         inventories.sort(Comparator.comparing(Inventory::getExpiryDate));
@@ -267,8 +312,6 @@ public class OrderService {
                     .mapToInt(Order::getTotalPrice)
                     .sum();
 
-
-
             timeList.add(OrderTodayDto.OrderTodayTime.of(hour, hallSales, deliverySales));
         }
         return(OrderTodayDto.OrderTodayResponse.of(
@@ -282,33 +325,20 @@ public class OrderService {
         LocalDate startOfWeek = today.with(DayOfWeek.MONDAY);
         LocalDate endOfWeek = today.with(DayOfWeek.SUNDAY);
 
-        Timestamp startTimestamp = Timestamp.valueOf(startOfWeek.atStartOfDay());
-        Timestamp endTimestamp = Timestamp.valueOf(endOfWeek.plusDays(1).atStartOfDay());
+        Timestamp start = Timestamp.valueOf(startOfWeek.atStartOfDay());
+        Timestamp end = Timestamp.valueOf(endOfWeek.plusDays(1).atStartOfDay());
 
-        List<Object[]> result = orderMenuRepository.findBestSellingMenusByStoreAndPeriod(storeId, startTimestamp, endTimestamp);
-        int temp = 0;
-        String first ="";
-        String second ="";
-        String third ="";
-        for (Object[] row : result) {
-            String menuName = (String) row[0];
-            if(temp>2){
-                break;
-            }
-            if(temp ==0){
-                first = menuName;
-            }
-            else if(temp ==1){
-                second = menuName;
-            }
-            else if(temp ==2){
-                third = menuName;
-            }
-            else{
-                break;
-            }
-            temp++;
-        }
+        // PageRequest.of(0, 3) → 첫 페이지(0)에서 3개만
+        List<Object[]> rows = orderMenuRepository
+                .findBestSellingMenusByStoreAndPeriod(
+                        storeId, start, end,
+                        PageRequest.of(0, 3)
+                );
+
+        String first  = rows.size() > 0 ? (String) rows.get(0)[0] : "";
+        String second = rows.size() > 1 ? (String) rows.get(1)[0] : "";
+        String third  = rows.size() > 2 ? (String) rows.get(2)[0] : "";
+
         return OrderTopMenuDto.TopWeekResponse.of(first, second, third);
     }
 
@@ -490,4 +520,3 @@ public class OrderService {
 
 
 }
-        

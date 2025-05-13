@@ -3,11 +3,14 @@ package com.example.be12fin5verdosewmthisbe.market_management.market.service;
 import com.example.be12fin5verdosewmthisbe.common.BaseResponse;
 import com.example.be12fin5verdosewmthisbe.common.CustomException;
 import com.example.be12fin5verdosewmthisbe.common.ErrorCode;
+import com.example.be12fin5verdosewmthisbe.common.UnitConvertService;
 import com.example.be12fin5verdosewmthisbe.inventory.model.Inventory;
 import com.example.be12fin5verdosewmthisbe.inventory.model.ModifyInventory;
 import com.example.be12fin5verdosewmthisbe.inventory.model.StoreInventory;
+import com.example.be12fin5verdosewmthisbe.inventory.model.dto.InventoryDto;
 import com.example.be12fin5verdosewmthisbe.inventory.repository.InventoryRepository;
 import com.example.be12fin5verdosewmthisbe.inventory.repository.StoreInventoryRepository;
+import com.example.be12fin5verdosewmthisbe.inventory.service.InventoryService;
 import com.example.be12fin5verdosewmthisbe.market_management.market.model.Images;
 import com.example.be12fin5verdosewmthisbe.market_management.market.model.InventoryPurchase;
 import com.example.be12fin5verdosewmthisbe.market_management.market.model.InventorySale;
@@ -21,9 +24,11 @@ import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.store.repository.StoreRepository;
 import com.fasterxml.jackson.databind.ser.Serializers;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.DayOfWeek;
 import java.time.Instant;
@@ -31,8 +36,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MarketService {
@@ -40,6 +47,9 @@ public class MarketService {
     private final InventorySaleRepository inventorySaleRepository;
     private final StoreInventoryRepository storeInventoryRepository;
     private final StoreRepository storeRepository;
+
+    private final InventoryService inventoryService;
+    private final UnitConvertService unitConvertService;
 
     public void saleRegister(InventorySaleDto.InventorySaleRequestDto dto, Long storeId, Inventory inventory) {
 
@@ -61,6 +71,7 @@ public class MarketService {
                 .expiryDate(inventory.getExpiryDate())
                 .sellerStoreName(store.getName())
                 .quantity(dto.getQuantity())
+                .unit(storeInventory.getUnit())
                 .price(dto.getPrice())
                 .status(InventorySale.saleStatus.valueOf("available"))
                 .content(dto.getContent())
@@ -85,6 +96,11 @@ public class MarketService {
     public void purchaseRegister(InventoryPurchaseDto.InventoryPurchaseRequestDto dto,Long storeId) {
         InventorySale sale = inventorySaleRepository.findById(dto.getInventorySaleId())
                 .orElseThrow(() -> new CustomException(ErrorCode.SALE_NOT_FOUND));
+        StoreInventory storeInventory = null;
+        if(dto.getStoreInventoryId() != null) {
+            storeInventory = storeInventoryRepository.findById(dto.getStoreInventoryId())
+                    .orElseThrow(() -> new CustomException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
+        }
 
         if(sale.getStatus() == InventorySale.saleStatus.valueOf("available")) {
             sale.setStatus(InventorySale.saleStatus.valueOf("waiting"));
@@ -99,10 +115,12 @@ public class MarketService {
                 .store(store)
                 .quantity(dto.getQuantity())
                 .price(dto.getPrice())
+                .unit(sale.getUnit())
                 .status(InventoryPurchase.purchaseStatus.PENDING_APPROVAL)
                 .method(InventoryPurchase.purchaseMethod.valueOf(dto.getMethod()))
                 .createdAt(Timestamp.from(Instant.now()))
                 .inventorySale(sale)
+                .storeInventory(storeInventory)
                 .build();
 
         inventoryPurchaseRepository.save(purchase);
@@ -113,22 +131,21 @@ public class MarketService {
                 .orElseThrow(() -> new CustomException(ErrorCode.SALE_NOT_FOUND));
     }
 
-    public List<InventorySaleDto.InventorySaleListDto> findInventorySaleListByStoreId(Long storeId) {
-        List<InventorySale> sales = inventorySaleRepository
-                .findByStore_IdAndStatus(storeId, InventorySale.saleStatus.available);
-        List<InventorySaleDto.InventorySaleListDto> salesDto = new ArrayList<>(
-                sales.stream().map(sale -> {
-                    return InventorySaleDto.InventorySaleListDto.builder()
-                            .inventorySaleId(sale.getId())
-                            .expirationDate(sale.getExpiryDate())
-                            .createdDate(sale.getCreatedAt().toLocalDateTime().toLocalDate())
-                            .inventoryName(sale.getInventoryName())
-                            .sellerStoreName(sale.getSellerStoreName())
-                            .price(sale.getPrice())
-                            .quantity(sale.getQuantity().toString())
-                            .build();
-                }).toList());
-        return salesDto;
+    public Map<Long, List<InventorySaleDto.InventorySaleListDto>> getInventorySalesByStoreIds(List<Long> storeIds) {
+        List<InventorySale> sales = inventorySaleRepository.findByStoreIdsAndStatus(storeIds, InventorySale.saleStatus.available);
+        return sales.stream()
+                .collect(Collectors.groupingBy(
+                        sale -> sale.getStore().getId(),
+                        Collectors.mapping(sale -> InventorySaleDto.InventorySaleListDto.builder()
+                                .inventorySaleId(sale.getId())
+                                .expirationDate(sale.getExpiryDate())
+                                .createdDate(sale.getCreatedAt().toLocalDateTime().toLocalDate())
+                                .inventoryName(sale.getInventoryName())
+                                .sellerStoreName(sale.getSellerStoreName())
+                                .price(sale.getPrice())
+                                .quantity(sale.getQuantity().toString())
+                                .build(), Collectors.toList())
+                ));
     }
 
     public List<InventorySale> findInventorySaleBySellerStoreId(Long sellerStoreId) {
@@ -188,8 +205,11 @@ public class MarketService {
         InventorySale inventorySale = inventoryPurchase.getInventorySale();
         inventoryPurchase.setStatus(InventoryPurchase.purchaseStatus.end);
         inventorySale.setStatus(InventorySale.saleStatus.sold);
+
         inventorySaleRepository.save(inventorySale);
         inventoryPurchaseRepository.save(inventoryPurchase);
+        StoreInventory storeInventory = inventoryPurchase.getStoreInventory();
+        addInventory(inventoryPurchase,storeInventory,inventorySale);
     }
 
     @Transactional
@@ -198,11 +218,11 @@ public class MarketService {
                 .orElseThrow(() -> new CustomException(ErrorCode.SALE_NOT_FOUND));
 
         List<InventoryPurchase> purchases = sale.getPurchaseList();
+        StoreInventory storeInventory = sale.getStoreInventory();
 
         boolean found = false;
         for (InventoryPurchase purchase : purchases) {
             if (purchase.getId().equals(purchaseId)) {
-
                 sale.setPrice(purchase.getPrice());
                 sale.setQuantity(purchase.getQuantity());
                 sale.setBuyerStoreName(purchase.getStore().getName());
@@ -213,6 +233,8 @@ public class MarketService {
                     sale.setStatus(InventorySale.saleStatus.isPaymentPending);
                     purchase.setStatus(InventoryPurchase.purchaseStatus.isPaymentInProgress);
                 }
+                // 재고 차감 로직 추가해야함
+                inventoryService.consumeInventory(storeInventory.getId(),purchase.getQuantity());
                 sale.setInventoryPurchaseId(purchaseId);
                 inventorySaleRepository.save(sale);
                 found = true;
@@ -226,7 +248,6 @@ public class MarketService {
         }
 
         inventoryPurchaseRepository.saveAll(purchases);
-
     }
 
     public void rejectPurchase(Long purchaseId) {
@@ -252,12 +273,19 @@ public class MarketService {
                 .toList();
     }
 
-    public List<InventorySaleDto.InventorySaleListDto> getNearbyAvailableSalesDto(List<Long> nearbyStoreIds) {
-        List<InventorySale> sales = inventorySaleRepository
-                .findByStore_IdInAndStatus(nearbyStoreIds, InventorySale.saleStatus.available);
+    public List<InventorySaleDto.InventorySaleListDto> getNearbyAvailableSalesDto(List<Long> nearbyStoreIds, Long myStoreId) {
+        List<InventorySale.saleStatus> targetStatuses = List.of(
+                InventorySale.saleStatus.available,
+                InventorySale.saleStatus.waiting
+        );
+
+        List<InventorySale> sales = inventorySaleRepository.findVisibleSalesWithFetch(
+                targetStatuses, nearbyStoreIds, myStoreId
+        );
 
         return convertToDtoList(sales);
     }
+
 
     public List<InventorySaleDto.InventorySaleListDto> convertToDtoList(List<InventorySale> sales) {
 
@@ -286,6 +314,44 @@ public class MarketService {
         inventorySale.setStatus(InventorySale.saleStatus.delivery);
         inventoryPurchaseRepository.save(inventoryPurchase);
         inventorySaleRepository.save(inventorySale);
+
+        StoreInventory storeInventory = inventoryPurchase.getStoreInventory();
+
+        addInventory(inventoryPurchase,storeInventory,inventorySale);
+    }
+    public void addInventory(InventoryPurchase inventoryPurchase,StoreInventory storeInventory,InventorySale inventorySale) {
+        InventoryDto.InventoryRegisterDto registerDto = null;
+        Boolean e = unitConvertService.canConvert(inventoryPurchase.getUnit(),storeInventory.getUnit());
+        log.info(inventoryPurchase.getUnit());
+        log.info(storeInventory.getUnit());
+        log.info(String.valueOf(e));
+        // 단위변환이 성공하면
+        if(storeInventory != null && unitConvertService.canConvert(inventoryPurchase.getUnit(),storeInventory.getUnit())) {
+            BigDecimal addition = unitConvertService.convert(inventoryPurchase.getQuantity(),inventoryPurchase.getUnit(),storeInventory.getUnit());
+
+            registerDto = InventoryDto.InventoryRegisterDto.builder()
+                    .storeInventoryId(storeInventory.getId())
+                    .price(inventoryPurchase.getPrice())
+                    .quantity(addition)
+                    .build();
+        } else { // 단위변환이 실패하면 그냥 새로 넣기
+            StoreInventory storeInventory2 = inventorySale.getStoreInventory();
+            StoreInventory newStoreInventory = storeInventoryRepository.save(StoreInventory.builder()
+                    .store(inventoryPurchase.getStore())
+                    .unit(storeInventory2.getUnit())
+                    .name(storeInventory2.getName())
+                    .minQuantity(storeInventory2.getMinQuantity())
+                    .quantity(BigDecimal.ZERO)
+                    .expiryDate(storeInventory2.getExpiryDate())
+                    .build());
+
+            registerDto = InventoryDto.InventoryRegisterDto.builder()
+                    .storeInventoryId(newStoreInventory.getId())
+                    .price(inventoryPurchase.getPrice())
+                    .quantity(inventoryPurchase.getQuantity())
+                    .build();
+        }
+        inventoryService.registerInventory(registerDto);
     }
 
 }

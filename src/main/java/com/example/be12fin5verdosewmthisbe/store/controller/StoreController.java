@@ -1,8 +1,11 @@
 package com.example.be12fin5verdosewmthisbe.store.controller;
 
 import com.example.be12fin5verdosewmthisbe.common.BaseResponse;
+import com.example.be12fin5verdosewmthisbe.market_management.market.model.InventorySale;
 import com.example.be12fin5verdosewmthisbe.market_management.market.model.dto.InventorySaleDto;
 import com.example.be12fin5verdosewmthisbe.market_management.market.service.MarketService;
+import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.StoreMenuDto;
+import com.example.be12fin5verdosewmthisbe.menu_management.menu.service.MenuService;
 import com.example.be12fin5verdosewmthisbe.security.JwtTokenProvider;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.store.model.dto.StoreDto;
@@ -18,11 +21,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @RestController
@@ -31,7 +37,7 @@ import java.util.List;
 public class StoreController {
     // Your code here
     private final StoreService storeService;
-    private final UserService userService;
+    private final MenuService menuService;
     private final JwtTokenProvider jwtTokenProvider;
     private final MarketService marketService;
 
@@ -100,21 +106,29 @@ public class StoreController {
     @GetMapping("/getNearbyStores")
     private List<StoreDto.response> getNearbyStores(HttpServletRequest request) {
         Long storeId = getStoreId(request);
-        List<Long> storeIdList = storeService.getNearbyStoreIds(storeId);
+        List<Store> storeList = storeService.getNearbyStoreIds(storeId);
+        List<Long> storeIds = storeList.stream().map(Store::getId).toList();
 
-        return storeIdList.stream()
-                .map(id -> {
-                    Store store = storeService.getStoreById(id);
+        Map<Long, List<InventorySaleDto.InventorySaleListDto>> salesMap = marketService.getInventorySalesByStoreIds(storeIds);
+
+        return storeList.stream()
+                .map(store -> {
                     return StoreDto.response.builder()
                             .name(store.getName())
                             .address(store.getAddress())
                             .phoneNumber(store.getPhoneNumber())
                             .latitude(store.getLatitude())
                             .longitude(store.getLongitude())
-                            .boardList(marketService.findInventorySaleListByStoreId(id))
+                            .boardList(salesMap.getOrDefault(store.getId(), new ArrayList<>()))
                             .build();
                 })
                 .toList();
+    }
+
+    @GetMapping("/{storeId}/menus")
+    public ResponseEntity<List<StoreMenuDto>> getMenusByStore(@PathVariable Long storeId) {
+        List<StoreMenuDto> menus = menuService.getMenusByStore(storeId);
+        return ResponseEntity.ok(menus);
     }
 
 }

@@ -8,13 +8,10 @@ import com.example.be12fin5verdosewmthisbe.menu_management.category.model.Catego
 import com.example.be12fin5verdosewmthisbe.menu_management.category.repository.CategoryRepository;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Menu;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
-import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.MenuInfoDto;
-import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.MenuSaleDto;
-import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.MenuDto;
-import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.MenuRegisterDto;
-import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.MenuUpdateDto;
+import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.dto.*;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.repository.MenuRepository;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.repository.RecipeRepository;
+import com.example.be12fin5verdosewmthisbe.menu_management.option.repository.OptionRepository;
 import com.example.be12fin5verdosewmthisbe.order.model.Order;
 import com.example.be12fin5verdosewmthisbe.order.model.OrderMenu;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderMenuRepository;
@@ -52,6 +49,7 @@ public class MenuService {
     private final StoreInventoryRepository storeInventoryRepository;
     private final StoreRepository storeRepository;
     private final OrderMenuRepository orderMenuRepository;
+    private final OptionRepository optionRepository;
 
     @Transactional
     public void registerMenu(MenuRegisterDto.MenuCreateRequestDto dto,Long storeId) {
@@ -177,7 +175,8 @@ public class MenuService {
         if (maxRecipe != null) {
             String name = maxRecipe.getStoreInventory().getName();
             BigDecimal quantity = maxRecipe.getQuantity();
-            String unit = maxRecipe.getStoreInventory().getUnit();
+            String rawUnit = maxRecipe.getStoreInventory().getUnit();
+            String unit = "unit".equals(rawUnit) ? "개" : rawUnit;
 
             int otherCount = (int) recipes.stream()
                     .filter(r -> r.getStoreInventory() != null)
@@ -203,7 +202,7 @@ public class MenuService {
     }
 
     public MenuDto.MenuDetailResponseDto getMenuDetail(Long menuId) {
-        Menu menu = menuRepository.findById(menuId)
+        Menu menu = menuRepository.findMenuWithRecipesAndInventories(menuId)
                 .orElseThrow(() -> new RuntimeException("해당 메뉴를 찾을 수 없습니다."));
 
         List<Recipe> recipes = menu.getRecipeList();
@@ -229,6 +228,7 @@ public class MenuService {
                 .ingredients(ingredients)
                 .build();
     }
+
 
     @Transactional
     public void deleteMenus(List<Long> menuIds) {
@@ -334,6 +334,20 @@ public class MenuService {
             menuSaleList.add(menuSale);
         }
         return(menuSaleList);
+    }
+
+    public List<StoreMenuDto> getMenusByStore(Long storeId) {
+        List<Menu> menus = menuRepository.findAllByStoreId(storeId);
+        List<Long> optionIds = optionRepository.findOptionIdsByStoreId(storeId);
+
+        return menus.stream()
+                .map(m -> StoreMenuDto.builder()
+                        .menuId(m.getId())
+                        .menuName(m.getName())
+                        .price(m.getPrice())
+                        .optionIds(optionIds)
+                        .build())
+                .collect(Collectors.toList());
     }
 
 

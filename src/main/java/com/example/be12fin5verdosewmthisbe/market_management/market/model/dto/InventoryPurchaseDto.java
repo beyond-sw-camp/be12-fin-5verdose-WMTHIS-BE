@@ -16,6 +16,8 @@ public class InventoryPurchaseDto {
         @NotBlank(message = "재고 이름은 필수입니다.")
         private String inventoryName;
 
+        private Long storeInventoryId;
+
         @NotNull(message = "수량은 필수입니다.")
         @DecimalMin(value = "0.01", inclusive = true, message = "수량은 0보다 커야 합니다.")
         private BigDecimal quantity;

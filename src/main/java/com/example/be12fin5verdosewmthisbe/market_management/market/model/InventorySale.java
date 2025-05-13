@@ -44,6 +44,8 @@ public class InventorySale {
 
     private int price;
 
+    private String unit;
+
     private saleStatus status;
 
     private String content;

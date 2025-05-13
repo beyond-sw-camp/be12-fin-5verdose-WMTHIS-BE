@@ -1,5 +1,6 @@
 package com.example.be12fin5verdosewmthisbe.order.repository;
 
+import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Menu;
 import com.example.be12fin5verdosewmthisbe.order.model.Order;
 import com.example.be12fin5verdosewmthisbe.payment.model.Payment;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -37,7 +38,14 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             ,@Param("end") Timestamp end
     );
 
-
+    @Query("""
+        SELECT o.store.id, SUM(o.totalPrice)
+        FROM Order o
+        WHERE o.createdAt BETWEEN :start AND :end
+          AND o.status = 'PAID'
+        GROUP BY o.store.id
+    """)
+    List<Object[]> findSalesByStoreBetween(@Param("start") Timestamp start, @Param("end") Timestamp end);
 
 }
         

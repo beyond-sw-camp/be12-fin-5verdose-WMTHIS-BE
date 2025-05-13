@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,7 +28,7 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
         JOIN FETCH i.storeInventory si
         JOIN FETCH si.store s
         WHERE s.id = :storeId       
-        AND i.inventoryId = :inventoryId
+        AND i.id = :inventoryId
     """)
     List<Inventory> findByStoreInventoryStoreIdANDStoreInAndInventoryId(@Param("storeId") Long storeId, @Param("inventoryId") Long inventoryId);
 
@@ -43,7 +44,19 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
     GROUP BY si.name
     """, nativeQuery = true)
     List<Object[]> findTotalQuantityByItemBetweenDates(@Param("startDate") Timestamp startDate,
-                                                       @Param("endDate") Timestamp endDate); 
+                                                       @Param("endDate") Timestamp endDate);
+
+
+    @Query("""
+    SELECT i
+    FROM Inventory i
+    JOIN FETCH i.storeInventory si
+    WHERE si.id IN :storeInventoryIds
+    ORDER BY i.expiryDate ASC
+""")
+    List<Inventory> findByStoreInventoryIdInOrderByExpiryDateAsc(
+            @Param("storeInventoryIds") List<Long> storeInventoryIds
+    );
     // 기간동안 입고된 inventory 종류별 수
 
 }

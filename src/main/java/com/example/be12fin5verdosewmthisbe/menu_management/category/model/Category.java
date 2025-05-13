@@ -17,7 +17,6 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Schema(description = "메뉴 카테고리 정보")
-// TODO: 가게 ID 추가해야함
 public class Category {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -29,7 +28,7 @@ public class Category {
     @JoinColumn(name = "store_id")
     private Store store;
 
-    @Column(unique = true, nullable = false)
+    @Column(nullable = false)
     @Schema(description = "카테고리 이름", example = "메인 요리")
     private String name;
 

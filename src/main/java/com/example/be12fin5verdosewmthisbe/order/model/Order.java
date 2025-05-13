@@ -57,12 +57,6 @@ public class Order {
         CANCELLED,
         PAID
     }
-    /*
-    @PrePersist
-    public void prePersist() {
-        this.createdAt = new Timestamp(System.currentTimeMillis());
-    }
-    */
 
 }
         

@@ -15,7 +15,7 @@
 
 ---
 
-# <img src="https://i.namu.wiki/i/pUSVyUCiN_NvwLXMZIvgzvr9XCAGZSzDzPm1_ypZRXSKaMEQ2_L9lYT-m2d-d8LF7cOUVPc1PLK5U37qLyNgUeWJ8OL70GyWxx4bQfGDZTrQbasowkpjGTbHdCi5gY3V3KO47CvdI9oK1q4QPZDh5Q.svg" alt="logo" width="30"> 팀원 구성
+# <img src="https://i.namu.wiki/i/i4lq7xgSiZoHNJFK7Zcon9-4AJtQMNsCoezqrOcBIgoIst9dfGMn863K0Qmru8prJDtUvOLHky_uuVwGqkuE6MhHGBwrLeMP7cc72-XSaHUdmz8r11xhxCo-pKesnUfavCgH9etSvzhKezlFQ37MIg.svg" alt="logo" width="30"> 팀원 구성
 
 <div align="center">
   <table>
@@ -249,7 +249,7 @@
 
 # 📜 프로젝트 설계
 
-[**🎨 ERD 바로가기**](https://www.figma.com/design/UhQdny2lyLYVBKfeSDM0ER/Untitled?node-id=0-1&p=f&t=BJpdqml8x7np3fWT-0)
+[**🎨 ERD 바로가기**](https://www.erdcloud.com/d/gaWyQgoD7gXc2LNvG)
 
 [**📃 API 명세서 바로가기**](http://www.cheeeze.kro.kr/swagger-ui/index.html)
 
