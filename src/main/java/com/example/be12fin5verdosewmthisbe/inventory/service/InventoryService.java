@@ -55,6 +55,7 @@ import java.time.temporal.ChronoUnit;
 
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static ch.qos.logback.classic.spi.ThrowableProxyVO.build;
@@ -173,7 +174,7 @@ public class InventoryService {
         return inventories.stream()
                 .map(inventory -> {
                     return InventoryDto.builder()
-                            .id(inventory.getInventoryId())
+                            .id(inventory.getId())
                             .purchaseDate(inventory.getPurchaseDate())
                             .expiryDate(inventory.getExpiryDate())
                             .quantity(inventory.getQuantity())
@@ -214,7 +215,7 @@ public class InventoryService {
         }
     }
     public Page<StoreInventoryDto.responseDto> getAllStoreInventories(Long storeId, Pageable pageable, String keyword) {
-        return storeInventoryRepository.findByStore_IdAndNameContaining(storeId,keyword, pageable)
+        return storeInventoryRepository.findByStoreAndNameContainingWithFetch(storeId,keyword, pageable)
                 .map(this::toDto);
     }
 
@@ -247,9 +248,9 @@ public class InventoryService {
     }
 
     @Transactional
-    public List<InventoryInfoDto.Response> getInventoryList(Long storeId) {
+    public List<InventoryListDto> getInventoryList(Long storeId) {
         // StoreInventory 리스트를 가져옵니다.
-        List<StoreInventory> inventoryList = storeInventoryRepository.findInventoryListByStore(storeId);
+        /*List<StoreInventory> inventoryList = storeInventoryRepository.findWithInventoryListByStore(storeId);
         List<InventoryInfoDto.Response> inventoryResponseList = new ArrayList<>();
 
         // inventoryList를 순회하며 Response 객체로 변환합니다.
@@ -284,7 +285,8 @@ public class InventoryService {
             inventoryResponseList.add(inventoryResponse);
         }
 
-        return inventoryResponseList;  // 변환된 리스트 반환
+        return inventoryResponseList;  // 변환된 리스트 반환*/
+        return storeInventoryRepository.fetchInventoryInfoByStore(storeId);
     }
 
     @Transactional
@@ -350,10 +352,10 @@ public class InventoryService {
 
         for (ModifyInventory modifyInventory : updateList) {
             Timestamp date = modifyInventory.getModifyDate(); // 수정 날짜
-            String stockName = modifyInventory.getInventory().getStoreInventory().getName();
+            String stockName = modifyInventory.getStoreInventory().getName();
             String changeReasonq = "수정";
             BigDecimal quantity = modifyInventory.getModifyQuantity();
-            String unit = modifyInventory.getInventory().getStoreInventory().getUnit();
+            String unit = modifyInventory.getStoreInventory().getUnit();
             InventoryChangeDto.Response saleResponse = InventoryChangeDto.Response.of(date, stockName, changeReasonq, quantity, unit);
             updateSoloList.add(saleResponse);
         }
@@ -361,6 +363,81 @@ public class InventoryService {
         return (updateSoloList);
     }
 
+    /**
+     * 여러 개의 storeInventoryId 당 소비량을 한 번에 처리합니다.
+     * @param usedInventoryQty Map<StoreInventory.id, 소비할 총 수량>
+     */
+    @Transactional
+    public void consumeInventories(Map<Long, BigDecimal> usedInventoryQty) {
+        // 1) 관련된 StoreInventory 엔티티들 한 번에 조회
+        List<StoreInventory> storeInventories =
+                storeInventoryRepository.findAllById(usedInventoryQty.keySet());
+        // 검증: 존재하지 않는 ID가 있으면 에러
+        if (storeInventories.size() != usedInventoryQty.size()) {
+            throw new CustomException(ErrorCode.INVENTORY_NOT_FOUND);
+        }
+
+        // 2) 관련된 모든 Inventory(유통기한별 재고) 한 번에 조회 (expiryDate 오름차순 보장)
+        List<Inventory> allInventories =
+                inventoryRepository.findByStoreInventoryIdInOrderByExpiryDateAsc(
+                        new ArrayList<>(usedInventoryQty.keySet())
+                );
+        // 그룹화: storeInventoryId → List<Inventory>
+        Map<Long, List<Inventory>> inventoryGroup = allInventories.stream()
+                .collect(Collectors.groupingBy(inv -> inv.getStoreInventory().getId()));
+
+        // 3) 처리 후 일괄 저장/삭제할 목록 준비
+        List<StoreInventory> inventoriesToSave = new ArrayList<>();
+        List<Inventory> inventoriesToSaveDetail = new ArrayList<>();
+        List<Inventory> inventoriesToDelete = new ArrayList<>();
+        List<ModifyInventory> modifyInventoriesToSave = new ArrayList<>();
+
+        // 4) 각 StoreInventory별로 소비 로직 실행
+        for (StoreInventory si : storeInventories) {
+            Long siId = si.getId();
+            BigDecimal toConsume = usedInventoryQty.get(siId);
+            BigDecimal newTotal = si.getQuantity().subtract(toConsume);
+            if (newTotal.compareTo(BigDecimal.ZERO) < 0) {
+                modifyInventoriesToSave.add(
+                        ModifyInventory.builder()
+                                .modifyDate(new Timestamp(System.currentTimeMillis()))
+                                .modifyQuantity(newTotal)
+                                .modifyRate(BigDecimal.valueOf(100))  // 전량 시도
+                                .storeInventory(si)
+                                .build()
+                );
+                // storeinventory 아래있는 inventory 다 삭제
+                continue;
+            }
+            // 남은 총 재고 반영
+            si.setQuantity(newTotal);
+            inventoriesToSave.add(si);
+
+            // 유통기한별 재고 차감
+            BigDecimal remaining = toConsume;
+            List<Inventory> group = inventoryGroup.getOrDefault(siId, List.of());
+            for (Inventory inv : group) {
+                if (remaining.compareTo(BigDecimal.ZERO) <= 0) break;
+                BigDecimal avail = inv.getQuantity();
+                if (avail.compareTo(remaining) <= 0) {
+                    // 이 항목은 전부 소비 → 삭제
+                    remaining = remaining.subtract(avail);
+                    inventoriesToDelete.add(inv);
+                } else {
+                    // 일부만 소비 → 수량만 수정
+                    inv.setQuantity(avail.subtract(remaining));
+                    inventoriesToSaveDetail.add(inv);
+                    remaining = BigDecimal.ZERO;
+                }
+            }
+        }
+
+        // 5) 일괄 반영
+        storeInventoryRepository.saveAll(inventoriesToSave);
+        inventoryRepository.saveAll(inventoriesToSaveDetail);
+        inventoryRepository.deleteAll(inventoriesToDelete);
+        modifyInventoryRepository.saveAll(modifyInventoriesToSave);
+    }
 
     @Transactional
     public void consumeInventory(Long storeInventoryId, BigDecimal requestedQuantity) {
@@ -417,7 +494,7 @@ public class InventoryService {
     @Transactional
     public InventoryCallDto.Response getInventoryCall(Long storeId) {
 
-        List<StoreInventory> storeInventoryList = storeInventoryRepository.findAllStoreInventoryByStore(storeId);
+        List<StoreInventory> storeInventoryList = storeInventoryRepository.findAllWithInventories(storeId);
         int expiringCount=0; // 만료 임박
         int reorderRequiredCount=0; // 발주 필요
         int receivedTodayCount=0;// 금일 입고
@@ -438,15 +515,11 @@ public class InventoryService {
                 if (daysBetween >= 0 && daysBetween <= 2) {
                     expiringCount++;
                 }
-
                 if(daysTodayBetween ==0){
                     receivedTodayCount++;
                 }
-
-
             }
             // 만료 임박
-
             BigDecimal minQuantity = storeInventory.getMinQuantity();
             BigDecimal quantity = storeInventory.getQuantity();
 
@@ -465,39 +538,57 @@ public class InventoryService {
         LocalDate today = LocalDate.now();
         LocalDate firstDayOfMonth = today.withDayOfMonth(1);
 
-        Timestamp startTimestamp = Timestamp.valueOf(firstDayOfMonth.atStartOfDay());
-        Timestamp endTimestamp = Timestamp.valueOf(LocalDateTime.now());
+        Timestamp start = Timestamp.valueOf(firstDayOfMonth.atStartOfDay());
+        Timestamp end   = Timestamp.valueOf(LocalDateTime.now());
 
-        int totalUpdateNumber = 0;
+        // 1) 기간 내 수정 이력 개수
+        int totalUpdateNumber = modifyInventoryRepository
+                .findUpdateListByStoreAndPeriod(storeId, start, end)
+                .size();
 
-        // 1. 수정된 재고 조회
-        List<ModifyInventory> modifyInventoryList = modifyInventoryRepository.findUpdateListByStoreAndPeriod(storeId, startTimestamp, endTimestamp);
+        // 2) StoreInventory + Inventory 한 번에 조회 (1쿼리)
+        List<StoreInventory> sis = storeInventoryRepository.findAllWithInventories(storeId);
 
-        totalUpdateNumber = modifyInventoryList.size(); // 단순 사이즈로 수정
+        // 3) 모든 id 수집
+        List<Long> storeInventoryIds = sis.stream()
+                .map(StoreInventory::getId)
+                .toList();
 
+        // 4) ModifyInventory 일괄 조회 (1쿼리)
+        List<ModifyInventory> allMods = modifyInventoryRepository.findByStoreInventory_IdIn(storeInventoryIds);
+
+        // 5) storeInventoryId → List<ModifyInventory> 그룹핑
+        Map<Long, List<ModifyInventory>> modsByInv = allMods.stream()
+                .collect(Collectors.groupingBy(mi -> mi.getStoreInventory().getId()));
+
+        // 6) 집계 로직
+        int expiringCount = 0;
         List<InventoryUpdateDto.ItemQuantityDto> highModifyItems = new ArrayList<>();
 
-        // 2. 매장(storeId)의 StoreInventory 가져오기
-        List<StoreInventory> storeInventories = storeInventoryRepository.findAllByStoreId(storeId);
-
-        for (StoreInventory storeInventory : storeInventories) {
+        for (StoreInventory si : sis) {
             BigDecimal totalStockedQuantity = BigDecimal.ZERO;
             BigDecimal totalModifiedQuantity = BigDecimal.ZERO;
 
-            // 3. 해당 StoreInventory의 Inventory 리스트 가져오  기
-            List<Inventory> inventories = storeInventory.getInventoryList();
+            for (Inventory inv : si.getInventoryList()) {
+                Timestamp purchaseTs = inv.getPurchaseDate();
+                LocalDate  purchaseDate = purchaseTs.toLocalDateTime().toLocalDate();
+                LocalDate  expiryDate   = inv.getExpiryDate();
 
-            for (Inventory inventory : inventories) {
-                if (inventory.getPurchaseDate().after(startTimestamp) && inventory.getPurchaseDate().before(endTimestamp)) {
+                if (!purchaseDate.isBefore(start.toLocalDateTime().toLocalDate()) &&
+                        !purchaseDate.isAfter(end.toLocalDateTime().toLocalDate())) {
                     totalStockedQuantity = totalStockedQuantity.add(
-                            inventory.getQuantity() != null ? inventory.getQuantity() : BigDecimal.ZERO
+                            Optional.ofNullable(inv.getQuantity()).orElse(BigDecimal.ZERO)
                     );
 
-                    for (ModifyInventory modifyInventory : inventory.getModifyInventoryList()) {
-                        if (modifyInventory.getModifyDate().after(startTimestamp) && modifyInventory.getModifyDate().before(endTimestamp)) {
-                            // ❗ 수정된 양은 절대값으로 누적해야 한다!
+                    // 이전에 로드해 둔 맵에서 꺼내기
+                    List<ModifyInventory> mods = modsByInv.getOrDefault(si.getId(), List.of());
+                    for (ModifyInventory mi : mods) {
+                        Timestamp modTs = mi.getModifyDate();
+                        if (!modTs.before(start) && !modTs.after(end)) {
                             totalModifiedQuantity = totalModifiedQuantity.add(
-                                    modifyInventory.getModifyQuantity() != null ? modifyInventory.getModifyQuantity().abs() : BigDecimal.ZERO
+                                    Optional.ofNullable(mi.getModifyQuantity())
+                                            .map(BigDecimal::abs)
+                                            .orElse(BigDecimal.ZERO)
                             );
                         }
                     }
@@ -505,10 +596,11 @@ public class InventoryService {
             }
 
             if (totalStockedQuantity.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal ratio = totalModifiedQuantity.divide(totalStockedQuantity, 4, RoundingMode.HALF_UP);
+                BigDecimal ratio = totalModifiedQuantity
+                        .divide(totalStockedQuantity, 4, RoundingMode.HALF_UP);
                 if (ratio.compareTo(BigDecimal.valueOf(0.1)) >= 0) {
                     highModifyItems.add(InventoryUpdateDto.ItemQuantityDto.builder()
-                            .itemName(storeInventory.getName())
+                            .itemName(si.getName())
                             .totalQuantity(totalModifiedQuantity)
                             .build());
                 }
@@ -520,6 +612,7 @@ public class InventoryService {
                 .itemQuantityDtoList(highModifyItems)
                 .build();
     }
+
 
     @Transactional
     public InventoryNotUsed getMaximumMarketPurchase(Long storeId) {
@@ -594,12 +687,10 @@ public class InventoryService {
     public InventoryRecipes.Response getInventoryRecipes(Long storeId, Long inventoryId) {
         StoreInventory storeInventory = storeInventoryRepository.findById(inventoryId).orElseThrow(()->
                 new CustomException(ErrorCode.INVENTORY_NOT_FOUND));
-        List<Recipe> recipes = recipeRepository.findAllByStoreInventory(storeInventory);
+        List<Recipe> recipes = recipeRepository.findAllByStoreInventoryWithMenu(storeInventory);
         List<String> list = new ArrayList<>();
         for(Recipe recipe : recipes){
-            Menu menu = menuRepository.findById(recipe.getMenu().getId()).orElseThrow(()->
-                    new CustomException(ErrorCode.MENU_NOT_FOUND));;
-            list.add(menu.getName());
+            list.add(recipe.getMenu().getName());
         }
         return InventoryRecipes.Response.from(list);
     }
@@ -680,8 +771,7 @@ public class InventoryService {
 
         return insufficientItems;
     }
-
-
+  
     @Transactional
     public void updateInventory(InventoryDto.InventoryUpdateDto dto) {
         Inventory inventory = inventoryRepository.findById(dto.getInventoryId())
@@ -714,11 +804,21 @@ public class InventoryService {
         storeInventory.setQuantity(totalQuantity);
         storeInventoryRepository.save(storeInventory);
 
+        BigDecimal modifyRate;
+        if (beforeQuantity.compareTo(BigDecimal.ZERO) == 0) {
+            modifyRate = BigDecimal.valueOf(100); // 0 → X 로 변경: 100% 증가로 간주
+        } else {
+            modifyRate = changeQuantity
+                    .divide(beforeQuantity, 4, RoundingMode.HALF_UP)  // 소수점 4자리
+                    .multiply(BigDecimal.valueOf(100));                // % 환산
+        }
+
         // 변경 이력 저장
         ModifyInventory modifyInventory = ModifyInventory.builder()
                 .modifyDate(new Timestamp(System.currentTimeMillis()))
                 .modifyQuantity(changeQuantity)
-                .inventory(inventory)
+                .modifyRate(modifyRate)
+                .storeInventory(storeInventory)
                 .build();
 
         modifyInventoryRepository.save(modifyInventory);

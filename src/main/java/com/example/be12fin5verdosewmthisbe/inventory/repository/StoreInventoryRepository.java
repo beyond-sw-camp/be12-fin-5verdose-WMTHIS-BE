@@ -2,12 +2,15 @@ package com.example.be12fin5verdosewmthisbe.inventory.repository;
 
 import com.example.be12fin5verdosewmthisbe.inventory.model.Inventory;
 import com.example.be12fin5verdosewmthisbe.inventory.model.StoreInventory;
+import com.example.be12fin5verdosewmthisbe.inventory.model.dto.InventoryInfoDto;
+import com.example.be12fin5verdosewmthisbe.inventory.model.dto.InventoryListDto;
 import com.example.be12fin5verdosewmthisbe.inventory.model.dto.InventoryMenuUsageDto;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
 import com.example.be12fin5verdosewmthisbe.market_management.market.model.InventorySale;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,28 +22,42 @@ public interface StoreInventoryRepository extends JpaRepository<StoreInventory, 
     boolean existsByStore_IdAndName(Long store_id, String name);
 
     List<StoreInventory> findByStore_Id(Long storeId);
-    Page<StoreInventory> findByStore_IdAndNameContaining(Long storeId, String keyword, Pageable pageable);
 
-    @Query(value = "SELECT name FROM store_inventory", nativeQuery = true)
-    List<String> findAllItemNames();
 
-    List<StoreInventory> findAllByStoreId(Long storeId);
+    @Query(
+            value = """
+            select si
+              from StoreInventory si
+              join fetch si.store s
+              join fetch s.user u
+             where s.id = :storeId
+               and si.name like %:keyword%
+             order by si.id desc
+        """,
+            countQuery = """
+            select count(si)
+              from StoreInventory si
+              where si.store.id = :storeId
+                and si.name like %:keyword%
+        """
+    )
+    Page<StoreInventory> findByStoreAndNameContainingWithFetch(
+            @Param("storeId") Long storeId,
+            @Param("keyword") String keyword,
+            Pageable pageable
+    );
+
+
 
 
     @Query("""
-        SELECT DISTINCT sm FROM StoreInventory sm
-        JOIN FETCH sm.store s
-        WHERE s.id = :storeId       
-    """)
-    List<StoreInventory> findInventoryListByStore(@Param("storeId") Long storeId);
+  SELECT si
+  FROM StoreInventory si
+  LEFT JOIN FETCH si.inventoryList inv
+  WHERE si.store.id = :storeId
+""")
+    List<StoreInventory> findAllWithInventories(@Param("storeId") Long storeId);
 
-    @Query("""
-        SELECT DISTINCT si FROM StoreInventory si
-        LEFT JOIN FETCH si.inventoryList i
-        JOIN FETCH si.store s
-        WHERE s.id = :storeId       
-    """)
-    List<StoreInventory> findAllStoreInventoryByStore(@Param("storeId") Long storeId);
 
     @Query("""
         SELECT DISTINCT si FROM StoreInventory si
@@ -79,9 +96,29 @@ public interface StoreInventoryRepository extends JpaRepository<StoreInventory, 
             @Param("end") Timestamp end
     );
 
-    List<StoreInventory> findByStore_IdAndRecipeList(Long storeId, Recipe recipeList);
-
-
     boolean existsByNameAndIdNot(@NotBlank(message = "재고명은 필수입니다.") String name, Long id);
+
+
+    @Query("""
+        select new com.example.be12fin5verdosewmthisbe.inventory.model.dto.InventoryListDto(
+            si.id,
+            si.name,
+            si.quantity,
+            si.unit,
+            min(i.expiryDate),
+            si.minQuantity
+        )
+        from StoreInventory si
+        left join si.inventoryList i
+        where si.store.id = :storeId
+          and i.quantity > 0
+        group by si.id, si.name, si.quantity, si.unit, si.minQuantity
+    """)
+    List<InventoryListDto> fetchInventoryInfoByStore(@Param("storeId") Long storeId);
+
+
+
+    @Query("SELECT si FROM StoreInventory si WHERE si.store.id = :storeId")
+    List<StoreInventory> findByStoreId(@Param("storeId") Long storeId);
 }
 

@@ -10,6 +10,7 @@ import com.example.be12fin5verdosewmthisbe.inventory.repository.InventoryReposit
 import com.example.be12fin5verdosewmthisbe.inventory.repository.ModifyInventoryRepository;
 import com.example.be12fin5verdosewmthisbe.inventory.repository.StoreInventoryRepository;
 import com.example.be12fin5verdosewmthisbe.inventory.repository.UsedInventoryRepository;
+import com.example.be12fin5verdosewmthisbe.inventory.service.InventoryService;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Menu;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.MenuCount;
 import com.example.be12fin5verdosewmthisbe.menu_management.menu.model.Recipe;
@@ -38,6 +39,7 @@ import lombok.Value;
 import org.aspectj.weaver.ast.Or;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,6 +49,7 @@ import java.sql.Timestamp;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static com.example.be12fin5verdosewmthisbe.order.model.dto.OrderDto.OrderCreateResponse.toOrderCreateResponse;
@@ -60,16 +63,12 @@ public class OrderService {
     private final StoreRepository storeRepository;
     private final StoreInventoryRepository storeInventoryRepository;
     private final MenuRepository menuRepository;
-    private final RecipeRepository recipeRepository;
-    private final OptionValueRepository optionValueRepository;
     private final InventoryRepository inventoryRepository;
     private final ModifyInventoryRepository modifyInventoryRepository;
     private final UsedInventoryRepository usedInventoryRepository;
     private final MenuCountRepository menuCountRepository;
-    private final RedisTemplate<String, Object> redisTemplate;
-
-    private ValueOperations<String, Object> valueOps;
-
+private final RedisTemplate<String, Object> redisTemplate;
+    
     @PostConstruct
     public void init() {
         valueOps = redisTemplate.opsForValue();
@@ -267,8 +266,6 @@ public class OrderService {
         return requestedQuantity;
     }
 
-
-
     public List<OrderDto.AllOrderList> getOrdersByStoreId(Long storeId) {
         List<Order> orders = orderRepository.findByStoreId(storeId);
         List<OrderDto.AllOrderList> allOrders = new ArrayList<>();
@@ -315,8 +312,6 @@ public class OrderService {
                     .mapToInt(Order::getTotalPrice)
                     .sum();
 
-
-
             timeList.add(OrderTodayDto.OrderTodayTime.of(hour, hallSales, deliverySales));
         }
         return(OrderTodayDto.OrderTodayResponse.of(
@@ -330,14 +325,19 @@ public class OrderService {
         LocalDate startOfWeek = today.with(DayOfWeek.MONDAY);
         LocalDate endOfWeek = today.with(DayOfWeek.SUNDAY);
 
-        Timestamp startTimestamp = Timestamp.valueOf(startOfWeek.atStartOfDay());
-        Timestamp endTimestamp = Timestamp.valueOf(endOfWeek.plusDays(1).atStartOfDay());
+        Timestamp start = Timestamp.valueOf(startOfWeek.atStartOfDay());
+        Timestamp end = Timestamp.valueOf(endOfWeek.plusDays(1).atStartOfDay());
 
-        List<Object[]> topMenus = menuCountRepository.findTopMenusByStoreAndPeriod(storeId, startTimestamp, endTimestamp);
+        // PageRequest.of(0, 3) → 첫 페이지(0)에서 3개만
+        List<Object[]> rows = orderMenuRepository
+                .findBestSellingMenusByStoreAndPeriod(
+                        storeId, start, end,
+                        PageRequest.of(0, 3)
+                );
 
-        String first = topMenus.size() > 0 ? (String) topMenus.get(0)[0] : "";
-        String second = topMenus.size() > 1 ? (String) topMenus.get(1)[0] : "";
-        String third = topMenus.size() > 2 ? (String) topMenus.get(2)[0] : "";
+        String first  = rows.size() > 0 ? (String) rows.get(0)[0] : "";
+        String second = rows.size() > 1 ? (String) rows.get(1)[0] : "";
+        String third  = rows.size() > 2 ? (String) rows.get(2)[0] : "";
 
         return OrderTopMenuDto.TopWeekResponse.of(first, second, third);
     }

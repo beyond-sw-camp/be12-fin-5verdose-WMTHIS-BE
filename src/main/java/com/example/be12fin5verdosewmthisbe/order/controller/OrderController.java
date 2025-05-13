@@ -25,7 +25,7 @@ public class OrderController {
 
     @PostMapping("/create")
     public BaseResponse<OrderDto.OrderCreateResponse> createOrder(@RequestBody OrderDto.OrderCreateRequest request, HttpServletRequest req) {
-        String token = null;
+        /*String token = null;
         if (req.getCookies() != null) {
             for (Cookie cookie : req.getCookies()) {
                 if ("ATOKEN".equals(cookie.getName())) {
@@ -37,9 +37,9 @@ public class OrderController {
         Claims claims = jwtTokenProvider.getClaims(token);
         // JWT 읽기
         String storeIdStr = claims.get("storeId", String.class);
-        Long storeId = Long.parseLong(storeIdStr);
+        Long storeId = Long.parseLong(storeIdStr);*/
 
-        OrderDto.OrderCreateResponse created = orderService.createOrder(request, storeId);
+        OrderDto.OrderCreateResponse created = orderService.createOrder(request, request.getStoreId());
         return BaseResponse.success(created);
     }
     @GetMapping("/getList")

@@ -4,6 +4,7 @@ import com.example.be12fin5verdosewmthisbe.common.BaseResponse;
 import com.example.be12fin5verdosewmthisbe.common.CustomException;
 import com.example.be12fin5verdosewmthisbe.common.ErrorCode;
 import com.example.be12fin5verdosewmthisbe.security.JwtTokenProvider;
+import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.user.model.User;
 import com.example.be12fin5verdosewmthisbe.user.model.dto.UserDto;
 import com.example.be12fin5verdosewmthisbe.user.model.dto.UserInfoDto;
@@ -53,12 +54,11 @@ public class UserController {
     @PostMapping("/login")
     public BaseResponse<String> login(@RequestBody @Valid UserDto.LoginRequest dto, HttpServletResponse response) {
         User user = userService.login(dto.getEmail(), dto.getPassword());
-        String emailUrl = dto.getEmail();
-        boolean isStoreRegistered = userService.isStoreRegistered(emailUrl);
+        Store store = user.getStore();
 
-        if(isStoreRegistered) {
-            String storeId = userService.getStoreId(emailUrl);
-            String jwtToken = jwtTokenProvider.createToken(emailUrl, storeId);
+        if(store != null) {
+            String storeId = String.valueOf(store.getId());
+            String jwtToken = jwtTokenProvider.createToken(dto.getEmail(), storeId);
 
             ResponseCookie cookie = ResponseCookie
                     .from("ATOKEN", jwtToken)
@@ -70,7 +70,7 @@ public class UserController {
             response.setHeader(HttpHeaders.SET_COOKIE, cookie.toString());
         }
         else{
-            String jwtToken = jwtTokenProvider.createToken(emailUrl);
+            String jwtToken = jwtTokenProvider.createToken(dto.getEmail());
 
             ResponseCookie cookie = ResponseCookie
                     .from("ATOKEN", jwtToken)

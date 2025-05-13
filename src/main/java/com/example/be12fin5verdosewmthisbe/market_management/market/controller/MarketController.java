@@ -56,11 +56,6 @@ public class MarketController {
         return BaseResponse.success("ok");
     }
 
-    /*@GetMapping("/get/{storeId}/active")
-    public BaseResponse<List<InventorySaleDto.InventorySaleResponseDto>> getSaleList(@PathVariable Long storeId) {
-        return marketService.getAvailableOrWaitingSales(storeId);
-    }*/
-
     @GetMapping("/get/{saleId}/purchaseList")
     public List<InventoryPurchaseDto.InventoryPurchaseResponseDto> getPurchasesBySaleId(@PathVariable Long saleId) {
         return marketService.getPurchasesBySaleId(saleId);
@@ -133,8 +128,9 @@ public class MarketController {
     @GetMapping("/getList")
     public BaseResponse<List<InventorySaleDto.InventorySaleListDto>> getList(HttpServletRequest request) {
         Long storeId = getStoreId(request);
-        List<Long> storeIdList = storeService.getNearbyStoreIds(storeId);
-        return BaseResponse.success(marketService.getNearbyAvailableSalesDto(storeIdList,storeId));
+        List<Store> storeList = storeService.getNearbyStoreIds(storeId);
+        List<Long> storeIds = storeList.stream().map(Store::getId).toList();
+        return BaseResponse.success(marketService.getNearbyAvailableSalesDto(storeIds,storeId));
     }
 
     private Long getStoreId(HttpServletRequest request) {

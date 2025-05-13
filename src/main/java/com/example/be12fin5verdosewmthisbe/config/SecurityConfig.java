@@ -39,7 +39,7 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/user/signup", "/api/store/register", "/api/user/login","/api/user/searchinfo", "/api/user/updatepassword","/api/email/sendcode","/api/email/sendcodeifpwfind", "/api/email/authcode", "/api/user/smssend", "/api/user/isLogin","/api/user/phoneverify",  "/api/actuator/**").permitAll()
+                .requestMatchers("/api/user/signup", "/api/store/register", "/api/user/login","/api/user/searchinfo", "/api/user/updatepassword","/api/email/sendcode","/api/email/sendcodeifpwfind", "/api/email/authcode", "/api/user/smssend", "/api/user/isLogin","/api/user/phoneverify",  "/api/actuator/**","/api/order/create","/api/store/**").permitAll()
 
                         .requestMatchers(HttpMethod.GET, "/public/**").permitAll()
                         .anyRequest().authenticated()

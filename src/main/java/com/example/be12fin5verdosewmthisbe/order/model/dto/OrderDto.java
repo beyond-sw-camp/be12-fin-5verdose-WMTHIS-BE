@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 public class OrderDto {
     @Data
     public static class OrderCreateRequest {
+        private Long storeId;
         private Integer tableNumber;
         private String orderType;
         private List<OrderMenuRequest> orderMenus;

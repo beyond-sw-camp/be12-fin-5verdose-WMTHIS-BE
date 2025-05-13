@@ -31,6 +31,13 @@ public interface InventorySaleRepository extends JpaRepository<InventorySale, Lo
             @Param("myStoreId") Long myStoreId
     );
 
+    @Query("SELECT i FROM InventorySale i WHERE i.store.id IN :storeIds AND i.status = :status")
+    List<InventorySale> findByStoreIdsAndStatus(@Param("storeIds") List<Long> storeIds, @Param("status") InventorySale.saleStatus status);
+
+
+    @Query("SELECT i FROM InventorySale i WHERE i.store.id IN :storeIds")
+    List<InventorySale> findByStoreIdIn(@Param("storeIds") List<Long> storeIds);
+
 
     @Query("""
         SELECT DISTINCT is FROM InventorySale is

@@ -10,15 +10,30 @@ import java.util.List;
 
 @Repository
 public interface StoreRepository extends JpaRepository<Store, Long> {
-    // Your code here
-    @Query("SELECT s.id FROM Store s WHERE s.id <> :storeId " +
-            "AND s.latitude BETWEEN :minLat AND :maxLat " +
-            "AND s.longitude BETWEEN :minLng AND :maxLng")
-    List<Long> findNearbyStoreIds(@Param("storeId") Long storeId,
-                                  @Param("minLat") Double minLat,
-                                  @Param("maxLat") Double maxLat,
-                                  @Param("minLng") Double minLng,
-                                  @Param("maxLng") Double maxLng);
+    @Query(value = """
+        SELECT s2.*
+        FROM store s1
+        JOIN store s2
+          ON s2.id <> :storeId
+        WHERE s1.id = :storeId
+          AND ST_Distance_Sphere(s1.location, s2.location) <= :radiusInMeters
+          AND EXISTS (
+              SELECT 1
+              FROM inventory_sale i
+              WHERE i.store_id = s2.id
+                AND i.status IN ('available','waiting')
+          )
+        """,
+            nativeQuery = true
+    )
+    List<Store> findNearbyStoresByStoreId(
+            @Param("storeId") Long storeId,
+            @Param("radiusInMeters") double radiusInMeters
+    );
+
+
+
+
 
 }
         

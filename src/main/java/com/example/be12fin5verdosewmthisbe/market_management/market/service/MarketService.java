@@ -36,6 +36,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -130,22 +131,21 @@ public class MarketService {
                 .orElseThrow(() -> new CustomException(ErrorCode.SALE_NOT_FOUND));
     }
 
-    public List<InventorySaleDto.InventorySaleListDto> findInventorySaleListByStoreId(Long storeId) {
-        List<InventorySale> sales = inventorySaleRepository
-                .findByStore_IdAndStatus(storeId, InventorySale.saleStatus.available);
-        List<InventorySaleDto.InventorySaleListDto> salesDto = new ArrayList<>(
-                sales.stream().map(sale -> {
-                    return InventorySaleDto.InventorySaleListDto.builder()
-                            .inventorySaleId(sale.getId())
-                            .expirationDate(sale.getExpiryDate())
-                            .createdDate(sale.getCreatedAt().toLocalDateTime().toLocalDate())
-                            .inventoryName(sale.getInventoryName())
-                            .sellerStoreName(sale.getSellerStoreName())
-                            .price(sale.getPrice())
-                            .quantity(sale.getQuantity().toString())
-                            .build();
-                }).toList());
-        return salesDto;
+    public Map<Long, List<InventorySaleDto.InventorySaleListDto>> getInventorySalesByStoreIds(List<Long> storeIds) {
+        List<InventorySale> sales = inventorySaleRepository.findByStoreIdsAndStatus(storeIds, InventorySale.saleStatus.available);
+        return sales.stream()
+                .collect(Collectors.groupingBy(
+                        sale -> sale.getStore().getId(),
+                        Collectors.mapping(sale -> InventorySaleDto.InventorySaleListDto.builder()
+                                .inventorySaleId(sale.getId())
+                                .expirationDate(sale.getExpiryDate())
+                                .createdDate(sale.getCreatedAt().toLocalDateTime().toLocalDate())
+                                .inventoryName(sale.getInventoryName())
+                                .sellerStoreName(sale.getSellerStoreName())
+                                .price(sale.getPrice())
+                                .quantity(sale.getQuantity().toString())
+                                .build(), Collectors.toList())
+                ));
     }
 
     public List<InventorySale> findInventorySaleBySellerStoreId(Long sellerStoreId) {
@@ -353,4 +353,5 @@ public class MarketService {
         }
         inventoryService.registerInventory(registerDto);
     }
+
 }

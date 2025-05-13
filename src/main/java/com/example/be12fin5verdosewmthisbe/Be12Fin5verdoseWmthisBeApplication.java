@@ -65,19 +65,19 @@ public class Be12Fin5verdoseWmthisBeApplication {
     private final OptionValueRepository optionValueRepository;
     private final CategoryOptionRepository categoryOptionRepository;
     private final OrderService orderService;
-    private final OrderRepository orderRepository;
-*/
+    private final OrderRepository orderRepository;*/
+
     public static void main(String[] args) {
         SpringApplication.run(Be12Fin5verdoseWmthisBeApplication.class, args);
     }
 
-    private Timestamp getRandomRecentTimestamp() {
+    /*private Timestamp getRandomRecentTimestamp() {
         long now = System.currentTimeMillis();
-        long twoMonthsAgo = now - Duration.ofDays(60).toMillis();
-        long randomTime = ThreadLocalRandom.current().nextLong(twoMonthsAgo, now);
+        long oneMonthsAgo = now - Duration.ofDays(30).toMillis();
+        long randomTime = ThreadLocalRandom.current().nextLong(oneMonthsAgo, now);
         return new Timestamp(randomTime);
     }
-    /*@Bean
+    @Bean
     CommandLineRunner generateDummyData(UserRepository userRepository, StoreRepository storeRepository) {
         return args -> {
             Faker faker = new Faker(new Locale("ko"));
@@ -151,6 +151,7 @@ public class Be12Fin5verdoseWmthisBeApplication {
                 String password = new BCryptPasswordEncoder().encode("q1w2e3r4Q!");
                 String businessNumber = faker.regexify("\\d{3}-\\d{2}-\\d{5}");
                 String phoneNumber = faker.regexify("010-\\d{4}-\\d{4}");
+                String storePhoneNumber = faker.regexify("02-\\d{3}-\\d{4}");
                 String ssn = faker.regexify("\\d{6}-\\d");
 
                 User user = userRepository.save(User.builder()
@@ -167,6 +168,7 @@ public class Be12Fin5verdoseWmthisBeApplication {
                         .user(user)
                         .name(storeData.name())
                         .address(storeData.address())
+                        .phoneNumber(storePhoneNumber)
                         .latitude(storeData.longitude())
                         .longitude(storeData.latitude())
                         .build());
@@ -307,7 +309,7 @@ public class Be12Fin5verdoseWmthisBeApplication {
                 }
 
                 // 6. 주문 생성
-                for (int i = 0; i < 100; i++) {
+                for (int i = 0; i < 500; i++) {
                     OrderDto.OrderCreateRequest request = new OrderDto.OrderCreateRequest();
 
                     String orderType = faker.options().option("hall", "baemin", "yogiyo", "coupang");
@@ -360,6 +362,8 @@ public class Be12Fin5verdoseWmthisBeApplication {
             }
         };
     }
+
+
 
     // 내부용 레코드 클래스
     private record ParsedStore(String name, String address, double latitude, double longitude) {}

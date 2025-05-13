@@ -148,7 +148,7 @@ public class InventoryController {
 
 
     @GetMapping("/inventoryList")
-    public BaseResponse<List<InventoryInfoDto.Response>> getInventoryList(HttpServletRequest request) {
+    public BaseResponse<List<InventoryListDto>> getInventoryList(HttpServletRequest request) {
 
         String token = null;
         if (request.getCookies() != null) {
@@ -163,7 +163,7 @@ public class InventoryController {
         // JWT 읽기
         String storeIdStr = claims.get("storeId", String.class);
         Long storeId = Long.parseLong(storeIdStr);
-        List<InventoryInfoDto.Response> inventoryList = inventoryService.getInventoryList(storeId);
+        List<InventoryListDto> inventoryList = inventoryService.getInventoryList(storeId);
         return BaseResponse.success(inventoryList);
     }
     // 재고 종류 리스트로 뽑기

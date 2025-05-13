@@ -30,7 +30,7 @@ public class StoreInventory {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "Store_inventory_id")
+    @Column(name = "id")
     @Schema(description = "매장별재고 ID", example = "1")
     private Long id;
 
@@ -85,7 +85,10 @@ public class StoreInventory {
     @JsonIgnore
     private List<UsedInventory> usedInventorylist = new ArrayList<>();
 
-
+    @OneToMany(mappedBy = "storeInventory", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @JsonIgnore
+    @Schema(description = "수정된 재고 목록")
+    private List<ModifyInventory> modifyInventoryList;
 
 }
 
