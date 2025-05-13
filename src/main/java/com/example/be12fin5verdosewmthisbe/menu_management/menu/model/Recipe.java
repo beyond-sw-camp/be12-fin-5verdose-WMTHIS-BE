@@ -2,6 +2,7 @@ package com.example.be12fin5verdosewmthisbe.menu_management.menu.model;
 
 import com.example.be12fin5verdosewmthisbe.inventory.model.Inventory;
 import com.example.be12fin5verdosewmthisbe.inventory.model.StoreInventory;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisRecipeDto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
 import lombok.*;
@@ -35,4 +36,18 @@ public class Recipe {
     @JoinColumn(name = "menu_id")
     @Schema(description = "레시피가 속한 메뉴 정보")
     private Menu menu;
+
+    public Recipe(Long recipeId, StoreInventory storeInventoryId, BigDecimal quantity) {
+        this.id = recipeId;
+        this.storeInventory = storeInventoryId;
+        this.quantity = quantity;
+    }
+
+    public RedisRecipeDto toRedisRecipeDto() {
+        return new RedisRecipeDto(
+                this.id,
+                this.storeInventory.getId(),  // 예시: storeInventory에서 재료 이름을 가져옴
+                this.quantity
+        );
+    }
 }

@@ -26,6 +26,10 @@ import com.example.be12fin5verdosewmthisbe.order.model.OrderOption;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderMenuRepository;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderOptionRepository;
 import com.example.be12fin5verdosewmthisbe.order.repository.OrderRepository;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisMenuDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisOptionDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisOptionValueDto;
+import com.example.be12fin5verdosewmthisbe.redis.dto.RedisRecipeDto;
 import com.example.be12fin5verdosewmthisbe.store.model.Store;
 import com.example.be12fin5verdosewmthisbe.store.repository.StoreRepository;
 import jakarta.transaction.Transactional;
@@ -36,6 +40,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 
@@ -43,6 +48,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -72,6 +78,7 @@ public class InventoryService {
     private final OrderRepository orderRepository;
     private final OrderOptionRepository orderOptionRepository;
     private final UsedInventoryRepository usedInventoryRepository;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     public StoreInventory registerStoreInventory(InventoryDetailRequestDto dto, Long storeId) {
         Store store = storeRepository.findById(storeId).orElseThrow(()->
@@ -692,71 +699,70 @@ public class InventoryService {
     public List<String> validateOrder(Long storeId, InventoryValidateOrderDto dto) {
         List<String> insufficientItems = new ArrayList<>();
 
-        // 1) 요청에서 메뉴 ID, 옵션 ID, 레시피 ID 수집
-        List<Long> menuIds   = dto.getOrderMenus().stream()
-                .map(InventoryValidateOrderDto.OrderMenuRequest::getMenuId)
-                .distinct().toList();
+        for (InventoryValidateOrderDto.OrderMenuRequest menuReq : dto.getOrderMenus()) {
+            Long menuId = menuReq.getMenuId();
+            String menuKey = "menu:" + menuId;
 
-        List<Long> optionIds = dto.getOrderMenus().stream()
-                .flatMap(m -> Optional.ofNullable(m.getOptionIds()).orElse(List.<Long>of()).stream())
-                .distinct().toList();
-
-        // 2) 배치 조회: 메뉴 → 레시피 → storeInventory
-        //    (레시피에 연관된 StoreInventory를 fetch join)
-        List<Menu> menus = menuRepository.load(menuIds);
-        Map<Long, Menu> menuMap = menus.stream()
-                .collect(Collectors.toMap(Menu::getId, Function.identity()));
-
-        // 3) 배치 조회: 옵션 → 옵션값 → storeInventory
-        List<Option> options = optionRepository.findAllByIdInFetchOptionValues(optionIds);
-        Map<Long, Option> optionMap = options.stream()
-                .collect(Collectors.toMap(Option::getId, Function.identity()));
-
-        // 4) storeInventory 전체 현황 조회 (필요하다면 storeId 조건 추가)
-        List<StoreInventory> allInventories = storeInventoryRepository.findByStoreId(storeId);
-        // Map<inventoryId, availableQuantity>
-        Map<Long, BigDecimal> inventoryAvailMap = allInventories.stream()
-                .collect(Collectors.toMap(
-                        StoreInventory::getId,
-                        StoreInventory::getQuantity,
-                        BigDecimal::add
-                ));
-
-        // 5) 각 OrderMenuRequest 별 검증
-        for (var menuReq : dto.getOrderMenus()) {
-            Menu menu = menuMap.get(menuReq.getMenuId());
-            if (menu == null) {
-                throw new CustomException(ErrorCode.MENU_NOT_FOUND);
+            // ✅ 메뉴 Redis에서 조회
+            RedisMenuDto redisMenuDto = (RedisMenuDto) redisTemplate.opsForValue().get(menuKey);
+            Menu menu;
+            if (redisMenuDto == null) {
+                menu = menuRepository.findById(menuId)
+                        .orElseThrow(() -> new CustomException(ErrorCode.MENU_NOT_FOUND));
+                redisMenuDto = RedisMenuDto.fromMenu(menu);
+                redisTemplate.opsForValue().set(menuKey, redisMenuDto, Duration.ofHours(6));
+            } else {
+                menu = redisMenuDto.toMenu(storeInventoryRepository);
             }
 
-            BigDecimal multiplier = BigDecimal.valueOf(menuReq.getQuantity());
+            // ✅ 레시피 Redis에서 조회
+            String recipeKey = "recipe:menu:" + menuId;
+            List<RedisRecipeDto> redisRecipeDtos = (List<RedisRecipeDto>) redisTemplate.opsForValue().get(recipeKey);
+            List<Recipe> recipes;
+            if (redisRecipeDtos == null) {
+                recipes = recipeRepository.findAllByMenu(menu);
+                redisRecipeDtos = recipes.stream().map(Recipe::toRedisRecipeDto).collect(Collectors.toList());
+                redisTemplate.opsForValue().set(recipeKey, redisRecipeDtos, Duration.ofHours(6));
+            } else {
+                recipes = redisRecipeDtos.stream()
+                        .map(dtoItem -> dtoItem.toRecipe(storeInventoryRepository))
+                        .collect(Collectors.toList());
+            }
 
-            // ——— 레시피 기반 재고 확인 ———
-            for (Recipe recipe : menu.getRecipeList()) {
-                Long invId = recipe.getStoreInventory().getId();
-                BigDecimal required = recipe.getQuantity().multiply(multiplier);
-                BigDecimal available = inventoryAvailMap.getOrDefault(invId, BigDecimal.ZERO);
+            for (Recipe recipe : recipes) {
+                List<StoreInventory> ingredients = storeInventoryRepository.findByStore_IdAndRecipeList(storeId, recipe);
 
-                if (available.compareTo(required) < 0) {
-                    insufficientItems.add("[" + recipe.getStoreInventory().getName() + "]");
+                BigDecimal requiredQuantity = recipe.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
+                BigDecimal availableQuantity = ingredients.stream()
+                        .map(StoreInventory::getQuantity)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                if (availableQuantity.compareTo(requiredQuantity) < 0) {
+                    String ingredientName = recipe.getStoreInventory().getName();
+                    insufficientItems.add("[" + ingredientName + "]");
                 }
             }
 
-            // ——— 옵션 기반 재고 확인 ———
+            // ✅ 옵션 Redis에서 확인
             if (menuReq.getOptionIds() != null) {
-                for (Long optId : menuReq.getOptionIds()) {
-                    Option option = optionMap.get(optId);
-                    if (option == null) {
-                        throw new CustomException(ErrorCode.OPTION_NOT_FOUND);
+                for (Long optionId : menuReq.getOptionIds()) {
+                    String optionKey = "option:" + optionId;
+                    RedisOptionDto redisOptionDto = (RedisOptionDto) redisTemplate.opsForValue().get(optionKey);
+
+                    if (redisOptionDto == null) {
+                        Option option = optionRepository.findById(optionId)
+                                .orElseThrow(() -> new CustomException(ErrorCode.OPTION_NOT_FOUND));
+                        redisOptionDto = RedisOptionDto.fromOption(option);
+                        redisTemplate.opsForValue().set(optionKey, redisOptionDto, Duration.ofHours(6));
                     }
 
-                    for (OptionValue ov : option.getOptionValueList()) {
-                        Long invId = ov.getStoreInventory().getId();
-                        BigDecimal required = ov.getQuantity().multiply(multiplier);
-                        BigDecimal available = inventoryAvailMap.getOrDefault(invId, BigDecimal.ZERO);
+                    for (RedisOptionValueDto valueDto : redisOptionDto.getOptionValues()) {
+                        StoreInventory optionInventory = storeInventoryRepository.findById(valueDto.getStoreInventoryId())
+                                .orElseThrow(() -> new CustomException(ErrorCode.INVENTORY_NOT_FOUND));
 
-                        if (available.compareTo(required) < 0) {
-                            insufficientItems.add("[" + option.getName() + "] 옵션 구성 재료가 부족할 수도 있습니다.");
+                        BigDecimal requiredOptionQuantity = valueDto.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
+                        if (optionInventory.getQuantity().compareTo(requiredOptionQuantity) < 0) {
+                            insufficientItems.add("\n[" + redisOptionDto.getName() + "] 옵션 구성 재료가 부족할 수도 있어요.\n");
                         }
                     }
                 }
@@ -765,7 +771,7 @@ public class InventoryService {
 
         return insufficientItems;
     }
-
+  
     @Transactional
     public void updateInventory(InventoryDto.InventoryUpdateDto dto) {
         Inventory inventory = inventoryRepository.findById(dto.getInventoryId())
