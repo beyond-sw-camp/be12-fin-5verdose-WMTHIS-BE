@@ -63,12 +63,15 @@ public class OrderService {
     private final StoreRepository storeRepository;
     private final StoreInventoryRepository storeInventoryRepository;
     private final MenuRepository menuRepository;
+    private final RecipeRepository recipeRepository;
     private final InventoryRepository inventoryRepository;
     private final ModifyInventoryRepository modifyInventoryRepository;
     private final UsedInventoryRepository usedInventoryRepository;
     private final MenuCountRepository menuCountRepository;
-private final RedisTemplate<String, Object> redisTemplate;
-    
+    private final RedisTemplate<String, Object> redisTemplate;
+
+    private ValueOperations<String, Object> valueOps;
+
     @PostConstruct
     public void init() {
         valueOps = redisTemplate.opsForValue();
@@ -78,6 +81,22 @@ private final RedisTemplate<String, Object> redisTemplate;
     public OrderDto.OrderCreateResponse createOrder(OrderDto.OrderCreateRequest request, Long storeId) {
         Store store = storeRepository.findById(storeId)
                 .orElseThrow(() -> new CustomException(ErrorCode.STORE_NOT_EXIST));
+
+        List<Long> menuIds = request.getOrderMenus().stream()
+                .map(OrderDto.OrderMenuRequest::getMenuId)
+                .distinct().toList();
+
+        List<Long> optionIds = request.getOrderMenus().stream()
+                .flatMap(m -> m.getOptionIds().stream())
+                .distinct().toList();
+
+        List<Menu> menus = menuRepository.load(menuIds);
+        Map<Long, Menu> menuMap = menus.stream()
+                .collect(Collectors.toMap(Menu::getId, Function.identity()));
+
+        List<Option> options = optionRepository.findAllById(optionIds);
+        Map<Long, Option> optionMap = options.stream()
+                .collect(Collectors.toMap(Option::getId, Function.identity()));
 
         Order order = Order.builder()
                 .tableNumber(request.getTableNumber())
@@ -89,15 +108,15 @@ private final RedisTemplate<String, Object> redisTemplate;
                 .build();
 
         int totalPrice = 0;
-        Map<Long, BigDecimal> usedInventoryMap = new HashMap<>();
-        Map<Menu, Integer> menuCountMap = new HashMap<>();
-        Map<Inventory, BigDecimal> modifyInventoryMap = new HashMap<>();
+        Map<Long, BigDecimal> usedInventoryQty = new HashMap<>();
+        Map<Long, BigDecimal> modifyInventoryQty = new HashMap<>();
+        Map<Long, Integer> menuCountMap = new HashMap<>();
 
         for (OrderDto.OrderMenuRequest menuReq : request.getOrderMenus()) {
             Long menuId = menuReq.getMenuId();
             String menuKey = "menu:" + menuId;
-            RedisMenuDto redisMenuDto = (RedisMenuDto) redisTemplate.opsForValue().get(menuKey);
 
+            RedisMenuDto redisMenuDto = (RedisMenuDto) redisTemplate.opsForValue().get(menuKey);
             Menu menu;
             if (redisMenuDto == null) {
                 menu = menuRepository.findById(menuId)
@@ -110,39 +129,38 @@ private final RedisTemplate<String, Object> redisTemplate;
 
             OrderMenu orderMenu = OrderMenu.builder()
                     .order(order)
-                    .price(menu.getPrice()) // 가격을 menu에서 가져옴
+                    .price(menu.getPrice())
                     .quantity(menuReq.getQuantity())
                     .menu(menu)
                     .orderOptionList(new ArrayList<>())
                     .build();
 
-            int menuTotal = menu.getPrice() * menuReq.getQuantity(); // menu에서 가져온 가격을 사용
+            int menuTotal = menu.getPrice() * menuReq.getQuantity();
 
-            // ✅ 레시피 캐싱
-            String recipeKey = "recipe:menu:" + menu.getId();
+            // ✅ 레시피 로드 및 재고 차감
+            String recipeKey = "recipe:menu:" + menuId;
             List<RedisRecipeDto> redisRecipeDtos = (List<RedisRecipeDto>) redisTemplate.opsForValue().get(recipeKey);
             List<Recipe> recipes;
 
             if (redisRecipeDtos == null) {
                 recipes = recipeRepository.findAllByMenu(menu);
-                redisRecipeDtos = recipes.stream().map(Recipe::toRedisRecipeDto).collect(Collectors.toList());
+                redisRecipeDtos = recipes.stream().map(Recipe::toRedisRecipeDto).toList();
                 redisTemplate.opsForValue().set(recipeKey, redisRecipeDtos, Duration.ofHours(6));
             } else {
                 recipes = redisRecipeDtos.stream()
                         .map(dto -> dto.toRecipe(storeInventoryRepository))
-                        .collect(Collectors.toList());
+                        .toList();
             }
 
             for (Recipe recipe : recipes) {
-                List<StoreInventory> ingredients = storeInventoryRepository.findByStore_IdAndRecipeList(storeId, recipe);
-                for (StoreInventory storeInventory : ingredients) {
-                    BigDecimal quantityToDeduct = recipe.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
-                    BigDecimal used = deductInventory(storeInventory, quantityToDeduct, modifyInventoryMap); // <- 수정
-                    usedInventoryMap.merge(storeInventory.getId(), used, BigDecimal::add);  // Key를 storeInventory.getId()로 수정
-                }
+                Long invId = recipe.getStoreInventory().getId();
+                BigDecimal deduct = recipe.getQuantity()
+                        .multiply(BigDecimal.valueOf(menuReq.getQuantity()));
+                usedInventoryQty.merge(invId, deduct, BigDecimal::add);
+                modifyInventoryQty.merge(invId, deduct.negate(), BigDecimal::add);
             }
 
-            // ✅ 옵션 및 옵션값 캐싱
+            // ✅ 옵션 처리
             for (Long optionId : menuReq.getOptionIds()) {
                 String optionKey = "option:" + optionId;
                 RedisOptionDto redisOptionDto = (RedisOptionDto) redisTemplate.opsForValue().get(optionKey);
@@ -165,17 +183,16 @@ private final RedisTemplate<String, Object> redisTemplate;
                 menuTotal += redisOptionDto.getPrice() * menuReq.getQuantity();
 
                 for (RedisOptionValueDto valueDto : redisOptionDto.getOptionValues()) {
-                    StoreInventory optionInventory = storeInventoryRepository.findById(valueDto.getStoreInventoryId())
-                            .orElseThrow(() -> new CustomException(ErrorCode.INVENTORY_NOT_FOUND));
+                    Long invId = valueDto.getStoreInventoryId();
                     BigDecimal quantityToDeduct = valueDto.getQuantity().multiply(BigDecimal.valueOf(menuReq.getQuantity()));
-                    BigDecimal used = deductInventory(optionInventory, quantityToDeduct, modifyInventoryMap);
-                    usedInventoryMap.merge(optionInventory.getId(), used, BigDecimal::add);
+                    usedInventoryQty.merge(invId, quantityToDeduct, BigDecimal::add);
+                    modifyInventoryQty.merge(invId, quantityToDeduct.negate(), BigDecimal::add);
                 }
-
-                order.getOrderMenuList().add(orderMenu);
-                totalPrice += menuTotal;
-                menuCountMap.merge(menu, menuReq.getQuantity(), Integer::sum);
             }
+
+            order.getOrderMenuList().add(orderMenu);
+            totalPrice += menuTotal;
+            menuCountMap.merge(menuId, menuReq.getQuantity(), Integer::sum);
         }
 
         order.setTotalPrice(totalPrice);
@@ -183,87 +200,40 @@ private final RedisTemplate<String, Object> redisTemplate;
 
         Timestamp now = Timestamp.valueOf(LocalDateTime.now());
 
-        // UsedInventory 저장
-        for (Map.Entry<Long, BigDecimal> entry : usedInventoryMap.entrySet()) {  // Key를 Long으로 수정
-            Long storeInventoryId = entry.getKey();  // key -> storeInventory의 ID
-            BigDecimal totalUsed = entry.getValue();
-            StoreInventory storeInventory = storeInventoryRepository.findById(storeInventoryId)
-                    .orElseThrow(() -> new CustomException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
+        List<UsedInventory> usedList = usedInventoryQty.entrySet().stream()
+                .map(e -> {
+                    StoreInventory si = storeInventoryRepository.getReferenceById(e.getKey());
+                    return UsedInventory.builder()
+                            .storeInventory(si)
+                            .totalquantity(e.getValue())
+                            .name(si.getName())
+                            .usedDate(now)
+                            .status(true)
+                            .build();
+                }).toList();
+        usedInventoryRepository.saveAll(usedList);
 
-            usedInventoryRepository.save(UsedInventory.builder()
-                    .storeInventory(storeInventory)
-                    .totalquantity(totalUsed)
-                    .name(storeInventory.getName())
-                    .usedDate(now)
-                    .status(true)
-                    .build());
-        }
+        List<ModifyInventory> modList = modifyInventoryQty.entrySet().stream()
+                .map(e -> ModifyInventory.builder()
+                        .storeInventory(storeInventoryRepository.getReferenceById(e.getKey()))
+                        .modifyQuantity(e.getValue())
+                        .modifyDate(now)
+                        .build())
+                .toList();
+        modifyInventoryRepository.saveAll(modList);
 
-        // ModifyInventory 저장 (중복 제거한 inventory 단위)
-        for (Map.Entry<Inventory, BigDecimal> entry : modifyInventoryMap.entrySet()) {
-            Inventory inventory = entry.getKey();
-            BigDecimal deficit = entry.getValue(); // 이미 음수임
+        List<MenuCount> countList = menuCountMap.entrySet().stream()
+                .map(e -> {
+                    MenuCount mc = new MenuCount();
+                    mc.setStore(store);
+                    mc.setMenu(menuMap.get(e.getKey()));
+                    mc.setCount(e.getValue());
+                    mc.setUsedDate(now);
+                    return mc;
+                }).toList();
+        menuCountRepository.saveAll(countList);
 
-            ModifyInventory modify = ModifyInventory.builder()
-                    .inventory(inventory)
-                    .modifyQuantity(deficit)
-                    .modifyDate(now)
-                    .build();
-
-            modifyInventoryRepository.save(modify);
-        }
-
-        // MenuCount 저장
-        for (Map.Entry<Menu, Integer> entry : menuCountMap.entrySet()) {
-            MenuCount menuCount = new MenuCount();
-            menuCount.setStore(store);
-            menuCount.setMenu(entry.getKey());
-            menuCount.setCount(entry.getValue());
-            menuCount.setUsedDate(now);
-            menuCountRepository.save(menuCount);
-        }
-
-        return toOrderCreateResponse(savedOrder); // 이곳에 return이 있어야 합니다.
-    }
-
-
-
-    private BigDecimal deductInventory(StoreInventory storeInventory, BigDecimal requestedQuantity, Map<Inventory, BigDecimal> modifyInventoryMap) {
-        List<Inventory> inventories = inventoryRepository.findAllByStoreInventory(storeInventory);
-        inventories.sort(Comparator.comparing(Inventory::getExpiryDate));
-
-        BigDecimal remaining = requestedQuantity;
-        BigDecimal totalDeducted = BigDecimal.ZERO;
-        Inventory lastInventory = null;
-
-        for (Inventory inv : inventories) {
-            BigDecimal current = inv.getQuantity();
-
-            if (current.compareTo(remaining) < 0) {
-                inv.setQuantity(BigDecimal.ZERO);
-                remaining = remaining.subtract(current);
-                totalDeducted = totalDeducted.add(current);
-                lastInventory = inv;
-            } else {
-                inv.setQuantity(current.subtract(remaining));
-                totalDeducted = totalDeducted.add(remaining);
-                remaining = BigDecimal.ZERO;
-                lastInventory = inv;
-            }
-
-            inventoryRepository.save(inv);
-
-            if (remaining.compareTo(BigDecimal.ZERO) <= 0) break;
-        }
-
-        if (remaining.compareTo(BigDecimal.ZERO) > 0 && lastInventory != null) {
-            modifyInventoryMap.merge(lastInventory, remaining.negate(), BigDecimal::add);
-        }
-
-        storeInventory.setQuantity(storeInventory.getQuantity().subtract(totalDeducted));
-        storeInventoryRepository.save(storeInventory);
-
-        return requestedQuantity;
+        return toOrderCreateResponse(savedOrder);
     }
 
     public List<OrderDto.AllOrderList> getOrdersByStoreId(Long storeId) {
