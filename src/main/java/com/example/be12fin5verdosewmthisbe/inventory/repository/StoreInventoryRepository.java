@@ -120,5 +120,7 @@ public interface StoreInventoryRepository extends JpaRepository<StoreInventory, 
 
     @Query("SELECT si FROM StoreInventory si WHERE si.store.id = :storeId")
     List<StoreInventory> findByStoreId(@Param("storeId") Long storeId);
+
+    List<StoreInventory> findByStore_IdAndRecipeList(Long storeId, Recipe recipe);
 }
 
