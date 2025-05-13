@@ -29,7 +29,6 @@ public class StoreService {
         return  String.valueOf(store.getId());
     }
 
-
     public List<Store> getNearbyStoreIds(Long storeId) {
         double radiusInMeters = RADIUS_KM * 1000;
         return storeRepository.findNearbyStoresByStoreId(storeId, radiusInMeters);
